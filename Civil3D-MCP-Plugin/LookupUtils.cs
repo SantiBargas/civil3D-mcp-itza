@@ -20,7 +20,22 @@ public static class LookupUtils
       return layerTable[layerName];
     }
 
-    return database.Clayer;
+    // A requested layer that doesn't exist is created rather than silently falling back to the
+    // current layer, which used to put entities on "0" without telling the caller.
+    try
+    {
+      SymbolUtilityServices.ValidateSymbolName(layerName, false);
+    }
+    catch (Autodesk.AutoCAD.Runtime.Exception)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"'{layerName}' is not a valid layer name.");
+    }
+
+    layerTable.UpgradeOpen();
+    var layer = new LayerTableRecord { Name = layerName };
+    var layerId = layerTable.Add(layer);
+    transaction.AddNewlyCreatedDBObject(layer, true);
+    return layerId;
   }
 
   public static ObjectId GetSiteId(CivilDocument civilDoc, Transaction transaction, string? siteName)

@@ -45,6 +45,7 @@ const ParcelDetailResponseSchema = z.object({
 const canonicalParcelInputShape = {
   action: z.enum([
     "list_sites",
+    "create_site",
     "list",
     "get",
     "create",
@@ -73,6 +74,11 @@ const canonicalParcelInputShape = {
 
 const ParcelListSitesArgsSchema = z.object({
   action: z.literal("list_sites"),
+});
+
+const ParcelCreateSiteArgsSchema = z.object({
+  action: z.literal("create_site"),
+  siteName: z.string().min(1),
 });
 
 const ParcelListArgsSchema = z.object({
@@ -138,6 +144,18 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
       pluginMethods: ["listParcelSites"],
       execute: async () => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("listParcelSites", {}),
+      ),
+    },
+    create_site: {
+      action: "create_site",
+      inputSchema: ParcelCreateSiteArgsSchema,
+      responseSchema: GenericParcelResponseSchema,
+      capabilities: ["create"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["createSite"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("createSite", { siteName: args.siteName }),
       ),
     },
     list: {
@@ -249,7 +267,7 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
       displayName: "Civil 3D Parcel",
       description: "Reads, creates, edits, adjusts, and reports Civil 3D parcel and site data through a single domain tool.",
       inputShape: canonicalParcelInputShape,
-      supportedActions: ["list_sites", "list", "get", "create", "edit", "lot_line_adjust", "report"],
+      supportedActions: ["list_sites", "create_site", "list", "get", "create", "edit", "lot_line_adjust", "report"],
       resolveAction: (rawArgs) => ({
         action: String(rawArgs.action ?? ""),
         args: rawArgs,

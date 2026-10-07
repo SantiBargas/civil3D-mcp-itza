@@ -19,8 +19,8 @@ internal static class FileBoundary
   private const uint FileFlagOpenReparsePoint = 0x00200000;
   private const int FileAttributeTagInfoClass = 9;
 
-  private static readonly Lazy<string[]> ImportRoots = new(() => LoadRoots(ImportRootsVariable));
-  private static readonly Lazy<string[]> ExportRoots = new(() => LoadRoots(ExportRootsVariable));
+  private static readonly Lazy<string[]> ImportRoots = new(() => LoadRoots(ImportRootsVariable, isImport: true));
+  private static readonly Lazy<string[]> ExportRoots = new(() => LoadRoots(ExportRootsVariable, isImport: false));
 
   public static string ResolveImportPath(string rawPath, params string[] allowedExtensions)
   {
@@ -153,28 +153,40 @@ internal static class FileBoundary
     return canonicalPath;
   }
 
-  private static string[] LoadRoots(string operationVariable)
+  // Default roots are always present; CIVIL3D_*_ROOTS only add to them (never replace), so a
+  // configured variable can't silently remove access to the user's standard folders.
+  private static string[] LoadRoots(string operationVariable, bool isImport)
   {
-    var configured = Environment.GetEnvironmentVariable(operationVariable);
-    if (string.IsNullOrWhiteSpace(configured))
-    {
-      configured = Environment.GetEnvironmentVariable(SharedRootsVariable);
-    }
+    var roots = new List<string>();
+    AddSpecialFolder(roots, Environment.SpecialFolder.MyDocuments);
+    AddSpecialFolder(roots, Environment.SpecialFolder.DesktopDirectory);
 
-    var roots = SplitRoots(configured).ToList();
-    if (roots.Count == 0)
+    if (isImport)
     {
-      var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-      if (!string.IsNullOrWhiteSpace(documents))
+      // Civil 3D drawing templates live under %LOCALAPPDATA%\Autodesk\C3D <version>\<lang>\Template.
+      var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+      if (!string.IsNullOrWhiteSpace(localAppData))
       {
-        roots.Add(documents);
+        roots.Add(Path.Combine(localAppData, "Autodesk"));
       }
     }
+
+    roots.AddRange(SplitRoots(Environment.GetEnvironmentVariable(SharedRootsVariable)));
+    roots.AddRange(SplitRoots(Environment.GetEnvironmentVariable(operationVariable)));
 
     return roots
       .Select(Path.GetFullPath)
       .Distinct(StringComparer.OrdinalIgnoreCase)
       .ToArray();
+  }
+
+  private static void AddSpecialFolder(List<string> roots, Environment.SpecialFolder folder)
+  {
+    var path = Environment.GetFolderPath(folder);
+    if (!string.IsNullOrWhiteSpace(path))
+    {
+      roots.Add(path);
+    }
   }
 
   private static IEnumerable<string> SplitRoots(string? configured)

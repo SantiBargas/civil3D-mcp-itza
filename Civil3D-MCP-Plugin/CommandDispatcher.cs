@@ -93,6 +93,7 @@ public static class CommandDispatcher
       "createSectionViewGroup" => SectionCommands.CreateSectionViewGroupAsync(parameters),
       "exportSectionData" => SectionCommands.ExportSectionDataAsync(parameters),
       // Parcels
+      "createSite" => ParcelEditingCommands.CreateSiteAsync(parameters),
       "createParcel" => ParcelEditingCommands.CreateParcelAsync(parameters),
       "editParcel" => ParcelEditingCommands.EditParcelAsync(parameters),
       "adjustParcelLotLine" => ParcelEditingCommands.AdjustParcelLotLineAsync(parameters),

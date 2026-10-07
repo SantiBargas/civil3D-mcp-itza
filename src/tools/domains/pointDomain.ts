@@ -112,6 +112,7 @@ const PointImportArgsSchema = z.object({
   action: z.literal("import"),
   format: z.enum(["pnezd", "penz", "xyzd", "xyz"]),
   data: z.string(),
+  groupName: z.string().min(1).optional(),
   targetSurface: z.string().optional(),
 });
 
@@ -233,6 +234,7 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("importCogoPoints", {
           format: args.format,
           data: args.data,
+          groupName: args.groupName ?? null,
           targetSurface: args.targetSurface,
         }),
       ),

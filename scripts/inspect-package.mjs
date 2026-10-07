@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-if (packageJson.main !== "build/index.js" || packageJson.bin?.["civil3d-mcp"] !== "./build/index.js") {
+if (packageJson.main !== "build/index.js" || packageJson.bin?.["sacred-g-itza"] !== "./build/index.js") {
   throw new Error("package.json main/bin entrypoints must both target build/index.js.");
 }
 

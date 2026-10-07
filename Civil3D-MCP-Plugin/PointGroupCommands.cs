@@ -127,11 +127,11 @@ public static class PointGroupCommands
 
         var line = format switch
         {
-          "pnezd" => $"{point.PointNumber}{delimiter}{point.Location.X}{delimiter}{point.Location.Y}{delimiter}{point.Location.Z}{delimiter}{point.RawDescription}",
-          "penz" => $"{point.PointNumber}{delimiter}{point.Location.X}{delimiter}{point.Location.Z}{delimiter}{point.Location.Y}{delimiter}{point.RawDescription}",
-          "xyzd" => $"{point.Location.X}{delimiter}{point.Location.Y}{delimiter}{point.Location.Z}{delimiter}{point.RawDescription}",
-          "xyz" => $"{point.Location.X}{delimiter}{point.Location.Y}{delimiter}{point.Location.Z}",
-          "csv" => $"{point.PointNumber}{delimiter}{point.PointName}{delimiter}{point.Location.X}{delimiter}{point.Location.Y}{delimiter}{point.Location.Z}{delimiter}{point.RawDescription}",
+          "pnezd" => FormattableString.Invariant($"{point.PointNumber}{delimiter}{point.Location.Y}{delimiter}{point.Location.X}{delimiter}{point.Location.Z}{delimiter}{point.RawDescription}"),
+          "penz" => FormattableString.Invariant($"{point.PointNumber}{delimiter}{point.Location.X}{delimiter}{point.Location.Y}{delimiter}{point.Location.Z}{delimiter}{point.RawDescription}"),
+          "xyzd" => FormattableString.Invariant($"{point.Location.X}{delimiter}{point.Location.Y}{delimiter}{point.Location.Z}{delimiter}{point.RawDescription}"),
+          "xyz" => FormattableString.Invariant($"{point.Location.X}{delimiter}{point.Location.Y}{delimiter}{point.Location.Z}"),
+          "csv" => FormattableString.Invariant($"{point.PointNumber}{delimiter}{point.PointName}{delimiter}{point.Location.X}{delimiter}{point.Location.Y}{delimiter}{point.Location.Z}{delimiter}{point.RawDescription}"),
           _ => throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Unsupported export format: {format}"),
         };
 
@@ -247,6 +247,35 @@ public static class PointGroupCommands
     }
 
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Point group '{name}' was not found.");
+  }
+
+  /// <summary>
+  /// Adds point numbers to a group's IncludeNumbers, creating the group if it doesn't exist.
+  /// </summary>
+  internal static void AddPointNumbersToGroup(
+    Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
+    Transaction transaction,
+    string groupName,
+    IEnumerable<uint> pointNumbers)
+  {
+    PointGroup? group = null;
+    foreach (ObjectId objectId in civilDoc.PointGroups)
+    {
+      var candidate = CivilObjectUtils.GetRequiredObject<PointGroup>(transaction, objectId, OpenMode.ForWrite);
+      if (string.Equals(candidate.Name, groupName, StringComparison.OrdinalIgnoreCase))
+      {
+        group = candidate;
+        break;
+      }
+    }
+
+    group ??= CivilObjectUtils.GetRequiredObject<PointGroup>(
+      transaction, civilDoc.PointGroups.Add(groupName), OpenMode.ForWrite);
+
+    var existing = (group.GetQuery() as StandardPointGroupQuery)?.IncludeNumbers;
+    var added = string.Join(",", pointNumbers.Distinct().OrderBy(n => n));
+    var includeNumbers = string.IsNullOrWhiteSpace(existing) ? added : $"{existing},{added}";
+    ApplyStandardQuery(group, includeNumbers, null, null);
   }
 
   private static void ApplyStandardQuery(

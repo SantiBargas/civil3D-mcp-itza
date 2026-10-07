@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
@@ -42,6 +43,34 @@ public static class ParcelEditingCommands
   }
 
   // -------------------------------------------------------------------------
+  // createSite
+  // -------------------------------------------------------------------------
+
+  public static Task<object?> CreateSiteAsync(JsonObject? parameters)
+  {
+    var siteName = PluginRuntime.GetRequiredString(parameters, "siteName");
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      foreach (ObjectId sid in EnumerateSiteIds(civilDoc))
+      {
+        var existing = CivilObjectUtils.GetRequiredObject<Site>(transaction, sid, OpenMode.ForRead);
+        if (string.Equals(existing.Name, siteName, StringComparison.OrdinalIgnoreCase))
+          throw new JsonRpcDispatchException("CIVIL3D.CONFLICT", $"Site '{siteName}' already exists.");
+      }
+
+      var siteId = Site.Create(civilDoc, siteName);
+      var site = CivilObjectUtils.GetRequiredObject<Site>(transaction, siteId, OpenMode.ForRead);
+
+      return new Dictionary<string, object?>
+      {
+        ["name"] = site.Name,
+        ["handle"] = CivilObjectUtils.GetHandle(site),
+        ["created"] = true,
+      };
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // listParcels
   // -------------------------------------------------------------------------
 
@@ -63,7 +92,7 @@ public static class ParcelEditingCommands
           ["number"] = GetParcelNumber(parcel),
           ["area"] = parcel.Area,
           ["perimeter"] = GetParcelPerimeter(parcel),
-          ["style"] = CivilObjectUtils.GetStringProperty(parcel.StyleId.IsNull ? null : transaction.GetObject(parcel.StyleId, OpenMode.ForRead), "Name"),
+          ["style"] = GetParcelStyleName(parcel, transaction),
         });
       }
 
@@ -102,7 +131,7 @@ public static class ParcelEditingCommands
         ["number"] = GetParcelNumber(parcel),
         ["area"] = parcel.Area,
         ["perimeter"] = GetParcelPerimeter(parcel),
-        ["style"] = CivilObjectUtils.GetStringProperty(parcel.StyleId.IsNull ? null : transaction.GetObject(parcel.StyleId, OpenMode.ForRead), "Name"),
+        ["style"] = GetParcelStyleName(parcel, transaction),
       };
     });
   }
@@ -134,12 +163,12 @@ public static class ParcelEditingCommands
           throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
             $"Entity with handle '{sourceHandle}' was not found.");
 
-        newParcelId = CreateParcelFromEntity(site, entityId, parcelName, transaction);
+        newParcelId = CreateParcelFromEntity(site, entityId, transaction);
       }
       else if (pointsNode != null && pointsNode.Count >= 3)
       {
         // Create from vertex list
-        newParcelId = CreateParcelFromPoints(site, pointsNode, parcelName, database, transaction);
+        newParcelId = CreateParcelFromPoints(site, pointsNode, database, transaction);
       }
       else
       {
@@ -287,8 +316,7 @@ public static class ParcelEditingCommands
           ["area"] = areaInUnits,
           ["areaUnits"] = units,
           ["perimeter"] = GetParcelPerimeter(parcel),
-          ["style"] = CivilObjectUtils.GetStringProperty(
-            parcel.StyleId.IsNull ? null : transaction.GetObject(parcel.StyleId, OpenMode.ForRead), "Name"),
+          ["style"] = GetParcelStyleName(parcel, transaction),
         };
 
         if (includeCoordinates)
@@ -352,28 +380,29 @@ public static class ParcelEditingCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Parcel '{parcelName}' was not found in site '{site.Name}'.");
   }
 
-  private static ObjectId CreateParcelFromEntity(Site site, ObjectId entityId, string? name, Transaction transaction)
+  // Civil 3D's .NET API exposes no parcel-creation method (Site only has GetParcelIds and
+  // ParcelSegment has no static creators), so parcels are created through COM:
+  // AeccSite.ParcelSegments.AddFromEntity, after which Civil 3D forms the parcel itself.
+  private static ObjectId CreateParcelFromEntity(Site site, ObjectId entityId, Transaction transaction)
   {
-    // Try Parcel.Create(siteId, entityId) or site.Parcels.Add(entityId)
-    var parcelsCollection = GetNamedMember(site, "Parcels") ?? GetNamedMember(site, "ParcelCollection");
-    var result = CivilObjectUtils.InvokeMethod(site, "CreateParcelFromEntity", entityId, name ?? "")
-      ?? CivilObjectUtils.InvokeMethod(parcelsCollection, "Add", entityId);
+    var before = site.GetParcelIds().Cast<ObjectId>().ToHashSet();
+    var entity = transaction.GetObject(entityId, OpenMode.ForRead);
 
-    if (result is ObjectId id && !id.IsNull) return id;
-
-    // Try static Parcel.Create
-    var parcelType = FindType("Autodesk.Civil.DatabaseServices.Parcel");
-    if (parcelType != null)
+    try
     {
-      var createResult = CivilObjectUtils.InvokeStaticMethod(parcelType, "Create",
-        site.ObjectId, entityId, name ?? "");
-      if (createResult is ObjectId oid && !oid.IsNull) return oid;
+      dynamic comSite = site.AcadObject;
+      comSite.ParcelSegments.AddFromEntity(entity.AcadObject, false);
+    }
+    catch (Exception ex)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.API_ERROR",
+        $"ParcelSegments.AddFromEntity failed: {ex.Message}");
     }
 
-    return ObjectId.Null;
+    return site.GetParcelIds().Cast<ObjectId>().FirstOrDefault(id => !before.Contains(id));
   }
 
-  private static ObjectId CreateParcelFromPoints(Site site, JsonArray pointsNode, string? name,
+  private static ObjectId CreateParcelFromPoints(Site site, JsonArray pointsNode,
     Database database, Transaction transaction)
   {
     var pts = new List<Point2d>();
@@ -400,7 +429,7 @@ public static class ParcelEditingCommands
     var tmpId = btr.AppendEntity(pline);
     transaction.AddNewlyCreatedDBObject(pline, true);
 
-    var parcelId = CreateParcelFromEntity(site, tmpId, name, transaction);
+    var parcelId = CreateParcelFromEntity(site, tmpId, transaction);
 
     // Erase the temporary polyline if parcel was created from it
     if (!parcelId.IsNull)
@@ -476,39 +505,26 @@ public static class ParcelEditingCommands
       ?? Civil3DCompatibility.GetFieldValue(value, memberName);
   }
 
+  // Parcel has no Perimeter in the .NET API; COM's AeccParcel.Statistics does.
   private static double? GetParcelPerimeter(Parcel parcel)
   {
-    var perimeter = CivilObjectUtils.GetDoubleProperty(parcel, "Perimeter");
-    if (perimeter.HasValue)
-      return perimeter.Value;
-
-    var boundary = CivilObjectUtils.InvokeMethod(parcel, "GetBoundary")
-      ?? CivilObjectUtils.InvokeMethod(parcel, "GetVertices");
-    if (boundary is not System.Collections.IEnumerable vertices)
-      return null;
-
-    var points = new List<Point2d>();
-    foreach (var vertex in vertices)
+    try
     {
-      var x = CivilObjectUtils.GetDoubleProperty(vertex, "X");
-      var y = CivilObjectUtils.GetDoubleProperty(vertex, "Y");
-      if (x.HasValue && y.HasValue)
-        points.Add(new Point2d(x.Value, y.Value));
+      dynamic comParcel = parcel.AcadObject;
+      return (double)comParcel.Statistics.Perimeter;
     }
-
-    if (points.Count < 2)
-      return null;
-
-    double length = 0;
-    for (var index = 1; index < points.Count; index++)
+    catch
     {
-      length += points[index - 1].GetDistanceTo(points[index]);
+      return null;
     }
+  }
 
-    if (points[0] != points[^1])
-      length += points[^1].GetDistanceTo(points[0]);
-
-    return length;
+  private static string? GetParcelStyleName(Parcel parcel, Transaction transaction)
+  {
+    if (parcel.StyleId.IsNull) return null;
+    return transaction.GetObject(parcel.StyleId, OpenMode.ForRead) is Autodesk.Civil.DatabaseServices.Styles.StyleBase style
+      ? style.Name
+      : null;
   }
 
   private static int GetParcelNumber(Parcel parcel)
@@ -551,10 +567,5 @@ public static class ParcelEditingCommands
 
     return FileBoundary.WriteAllTextAtomic(
       outputPath, csv.ToString(), System.Text.Encoding.UTF8, overwrite, ".csv");
-  }
-
-  private static Type? FindType(string typeName)
-  {
-    return Civil3DCompatibility.FindLoadedType(typeName);
   }
 }

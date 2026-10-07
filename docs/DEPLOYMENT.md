@@ -263,9 +263,9 @@ All variables are optional; defaults work for a standard local setup.
 | `MCP_HTTP_MAX_BODY_BYTES` | `1048576` | Maximum accepted `/execute` request body |
 | `MCP_HTTP_ALLOWED_HOSTS` | Loopback hostnames | Comma-separated accepted HTTP Host names; required for non-loopback binds |
 | `MCP_HTTP_ALLOWED_ORIGINS` | *(unset)* | Comma-separated browser origins; wildcards are rejected |
-| `CIVIL3D_FILE_ROOTS` | User Documents | Semicolon-separated fallback roots for plugin imports and exports |
-| `CIVIL3D_IMPORT_ROOTS` | `CIVIL3D_FILE_ROOTS` | Optional import-only roots |
-| `CIVIL3D_EXPORT_ROOTS` | `CIVIL3D_FILE_ROOTS` | Optional export-only roots |
+| `CIVIL3D_FILE_ROOTS` | — | Semicolon-separated extra roots for imports and exports, added to the defaults (Documents + Desktop; imports also `%LOCALAPPDATA%\Autodesk`) |
+| `CIVIL3D_IMPORT_ROOTS` | — | Extra import-only roots (added) |
+| `CIVIL3D_EXPORT_ROOTS` | — | Extra export-only roots (added) |
 | `CIVIL3D_LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `CIVIL3D_MCP_LOG_DIR` | Local AppData | Native plugin rotating-log directory; set before Civil 3D starts |
 | `CIVIL3D_MCP_LOG_LEVEL` | `info` | Native plugin log threshold; set before Civil 3D starts |

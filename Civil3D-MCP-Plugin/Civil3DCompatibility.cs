@@ -360,7 +360,21 @@ internal static class Civil3DCompatibility
     return PropertyCache.GetOrAdd(key, static item =>
     {
       var flags = BindingFlags.Public | (item.IsStatic ? BindingFlags.Static : BindingFlags.Instance);
-      return new CachedProperty(item.Type.GetProperty(item.Name, flags));
+      var property = item.Type.GetProperty(item.Name, flags);
+      if (property == null && !item.IsStatic)
+      {
+        // Civil 3D frequently exposes domain properties (Parcels, Name, ...) via
+        // explicit interface implementation, which GetProperty on the concrete
+        // type does not see. Fall back to searching the implemented interfaces;
+        // the resulting PropertyInfo still works with GetValue/SetValue against
+        // the concrete instance.
+        foreach (var iface in item.Type.GetInterfaces())
+        {
+          property = iface.GetProperty(item.Name, BindingFlags.Public | BindingFlags.Instance);
+          if (property != null) break;
+        }
+      }
+      return new CachedProperty(property);
     }).Value;
   }
 
@@ -377,10 +391,24 @@ internal static class Civil3DCompatibility
     var methods = MethodCache.GetOrAdd(key, static item =>
     {
       var flags = BindingFlags.Public | (item.IsStatic ? BindingFlags.Static : BindingFlags.Instance);
-      return new CachedMethods(item.Type
+      var direct = item.Type
         .GetMethods(flags)
         .Where(method => method.Name == item.Name && method.GetParameters().Length == item.ArgumentCount)
-        .ToArray());
+        .ToArray();
+      if (direct.Length > 0 || item.IsStatic)
+      {
+        return new CachedMethods(direct);
+      }
+
+      // Same explicit-interface-implementation gap as ResolveProperty: methods
+      // like Site.CreateParcelFromEntity are not found by GetMethods on the
+      // concrete type, only via the interface that declares them.
+      var viaInterfaces = item.Type
+        .GetInterfaces()
+        .SelectMany(iface => iface.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+        .Where(method => method.Name == item.Name && method.GetParameters().Length == item.ArgumentCount)
+        .ToArray();
+      return new CachedMethods(viaInterfaces);
     }).Values;
 
     foreach (var method in methods)

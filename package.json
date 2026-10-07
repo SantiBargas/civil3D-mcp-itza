@@ -1,5 +1,5 @@
 {
-  "name": "civil3d-mcp",
+  "name": "sacred-g-itza",
   "version": "1.2.1",
   "description": "MCP server for interacting with Autodesk Civil 3D.",
   "main": "build/index.js",
@@ -8,7 +8,7 @@
     "node": ">=18.17.0"
   },
   "bin": {
-    "civil3d-mcp": "./build/index.js"
+    "sacred-g-itza": "./build/index.js"
   },
   "scripts": {
     "clean": "rimraf build",
@@ -39,15 +39,15 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Sacred-G/Civil3D-mcp.git"
+    "url": "git+https://github.com/SantiBargas/sacred-g-itza.git"
   },
   "keywords": [],
   "author": "Steven Bouldin",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/Sacred-G/Civil3D-mcp/issues"
+    "url": "https://github.com/SantiBargas/sacred-g-itza/issues"
   },
-  "homepage": "https://github.com/Sacred-G/Civil3D-mcp#readme",
+  "homepage": "https://github.com/SantiBargas/sacred-g-itza#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cheerio": "^1.0.0",

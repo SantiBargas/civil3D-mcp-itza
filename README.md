@@ -972,9 +972,9 @@ the current user's Documents folder.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CIVIL3D_FILE_ROOTS` | User Documents | Shared fallback roots for imports and exports. |
-| `CIVIL3D_IMPORT_ROOTS` | `CIVIL3D_FILE_ROOTS` | Optional import-only roots for templates, DEM files, LandXML, STM, and other source artifacts. |
-| `CIVIL3D_EXPORT_ROOTS` | `CIVIL3D_FILE_ROOTS` | Optional export-only roots for drawings and generated reports. |
+| `CIVIL3D_FILE_ROOTS` | — | Extra roots for imports and exports, **added** to the defaults (Documents + Desktop; imports also `%LOCALAPPDATA%\Autodesk` for `.dwt` templates). Never replaces them. |
+| `CIVIL3D_IMPORT_ROOTS` | — | Extra import-only roots (added) for templates, DEM files, LandXML, STM, and other source artifacts. |
+| `CIVIL3D_EXPORT_ROOTS` | — | Extra export-only roots (added) for drawings and generated reports. |
 
 Import/export tools enforce operation-specific extensions. Generated text and
 CSV artifacts are written to a temporary file in the destination directory and
