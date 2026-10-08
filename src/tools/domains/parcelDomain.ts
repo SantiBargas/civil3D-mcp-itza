@@ -49,6 +49,7 @@ const canonicalParcelInputShape = {
     "list",
     "get",
     "create",
+    "create_many",
     "edit",
     "lot_line_adjust",
     "report",
@@ -58,6 +59,12 @@ const canonicalParcelInputShape = {
   name: z.string().optional(),
   sourceHandle: z.string().optional(),
   points: z.array(z.tuple([z.number(), z.number()])).optional(),
+  parcels: z.array(z.object({
+    name: z.string().optional(),
+    points: z.array(z.tuple([z.number(), z.number()])).min(3),
+    style: z.string().optional(),
+    areaLabelStyle: z.string().optional(),
+  })).optional(),
   style: z.string().optional(),
   areaLabelStyle: z.string().optional(),
   newName: z.string().optional(),
@@ -100,6 +107,19 @@ const ParcelCreateArgsSchema = z.object({
   points: z.array(z.tuple([z.number(), z.number()])).min(3).optional(),
   style: z.string().optional(),
   areaLabelStyle: z.string().optional(),
+});
+
+const MAX_BATCH_PARCELS = 300;
+
+const ParcelCreateManyArgsSchema = z.object({
+  action: z.literal("create_many"),
+  siteName: z.string(),
+  parcels: z.array(z.object({
+    name: z.string().optional(),
+    points: z.array(z.tuple([z.number(), z.number()])).min(3),
+    style: z.string().optional(),
+    areaLabelStyle: z.string().optional(),
+  })).min(1).max(MAX_BATCH_PARCELS),
 });
 
 const ParcelEditArgsSchema = z.object({
@@ -204,6 +224,27 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    create_many: {
+      action: "create_many",
+      inputSchema: ParcelCreateManyArgsSchema,
+      responseSchema: GenericParcelResponseSchema,
+      capabilities: ["create"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["createParcels"],
+      execute: async (rawArgs) => {
+        const args = ParcelCreateManyArgsSchema.parse(rawArgs);
+        return await withApplicationConnection(async (appClient) => await appClient.sendCommand("createParcels", {
+          siteName: args.siteName,
+          parcels: args.parcels.map((parcel) => ({
+            name: parcel.name ?? null,
+            points: parcel.points,
+            style: parcel.style ?? null,
+            areaLabelStyle: parcel.areaLabelStyle ?? null,
+          })),
+        }));
+      },
+    },
     edit: {
       action: "edit",
       inputSchema: ParcelEditArgsSchema,
@@ -256,7 +297,7 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
           outputPath: args.outputPath ?? null,
           overwrite: args.overwrite ?? false,
           includeCoordinates: args.includeCoordinates ?? false,
-          units: args.units ?? "sqft",
+          units: args.units ?? null,
         }),
       ),
     },
@@ -267,7 +308,7 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
       displayName: "Civil 3D Parcel",
       description: "Reads, creates, edits, adjusts, and reports Civil 3D parcel and site data through a single domain tool.",
       inputShape: canonicalParcelInputShape,
-      supportedActions: ["list_sites", "create_site", "list", "get", "create", "edit", "lot_line_adjust", "report"],
+      supportedActions: ["list_sites", "create_site", "list", "get", "create", "create_many", "edit", "lot_line_adjust", "report"],
       resolveAction: (rawArgs) => ({
         action: String(rawArgs.action ?? ""),
         args: rawArgs,

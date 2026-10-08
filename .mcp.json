@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "civil3d-mcp": {
+      "type": "stdio",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/claude-bootstrap-and-run.ps1"
+      ]
+    }
+  }
+}

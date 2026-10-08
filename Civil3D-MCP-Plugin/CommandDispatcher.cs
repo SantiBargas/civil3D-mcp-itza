@@ -95,6 +95,7 @@ public static class CommandDispatcher
       // Parcels
       "createSite" => ParcelEditingCommands.CreateSiteAsync(parameters),
       "createParcel" => ParcelEditingCommands.CreateParcelAsync(parameters),
+      "createParcels" => ParcelEditingCommands.CreateParcelsAsync(parameters),
       "editParcel" => ParcelEditingCommands.EditParcelAsync(parameters),
       "adjustParcelLotLine" => ParcelEditingCommands.AdjustParcelLotLineAsync(parameters),
       "reportParcels" => ParcelEditingCommands.ReportParcelsAsync(parameters),

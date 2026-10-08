@@ -10,6 +10,138 @@ Formato: una sección por día (MM-DD), lo más nuevo arriba. Cada cambio dice *
 
 ---
 
+## 10-08 (2026)
+
+### `civil3d_parcel report`: unidades de área y vértices
+
+- **Bug 1 — unidades:** `ConvertArea` suponía que el dibujo siempre está en pies (`sqm` = área ×
+  0,092903) → en un dibujo métrico, 871 m² salían como 80,92 «sqm». Y el TS mandaba `units: "sqft"`
+  por defecto, así que sin pedir nada devolvía m² rotulados como sqft.
+  **Fix:** `SquareMetersPerDrawingUnit` lee `INSUNITS` (m, ft, US survey ft, mm, cm, km, in) → el
+  área se pasa a m² y de ahí a la unidad pedida (`sqm`, `ha`, `sqft`, `acres`, factores exactos).
+  Sin `units`, devuelve la unidad nativa del dibujo (`sqm` en métrico, `sqft` en pies); si el dibujo
+  tiene unidades no convertibles y se pidió una, `CIVIL3D.INVALID_INPUT` en vez de un número falso.
+  TS: `units: args.units ?? null` (el default lo decide el plugin).
+- **Bug 2 — `includeCoordinates` devolvía `vertices: []`:** leía `GetBoundary`/`GetVertices` por
+  reflexión, que no existen. **Verificado en metadata:** el `Parcel` .NET no expone ningún contorno
+  (ni `Parcel` ni `ParcelSegment` tienen métodos de geometría); el interop COM
+  (`Autodesk.AECC.Interop.Land.dll`) sí: `IAeccParcel.ParcelLoops` → `IAeccParcelLoop` →
+  `IAeccParcelSegmentElement` con `StartX/StartY/EndX/EndY`. **Fix:** `GetParcelVertices` por COM;
+  cada vértice trae `loop`, `x`, `y` (los arcos, solo por su punto inicial). Si COM falla →
+  `CIVIL3D.API_ERROR` con el mensaje real.
+- **Estado bugs 1 y 2:** compila (0 errores, 0 advertencias), 426/426 tests TS, ✅ **probado en vivo**
+  sobre `loteo-prueba-sacredgitza-etapa2.dwg`: `sqm` → Calle 3 S 871,00 y EV 3.840; `ha` → EV 0,384;
+  sin `units` → `sqm` nativo; vértices por COM correctos (M1-10: 5 con la ochava
+  (5109,6716; 10000)→(5112,5; 10002,8284); EV: 4; Calle 3 S: 10, porque Civil 3D parte sus segmentos
+  donde llegan los linderos de los lotes vecinos).
+- **Bug 3 — CSV de `report` (`outputPath`):** ignoraba `includeCoordinates` y escribía los números
+  con la cultura del sistema (coma decimal en Windows en español → columnas corridas, el mismo bug que
+  tenía el export de puntos), sin escapar comas en nombres. **Fix:** números con
+  `InvariantCulture`, campos con comillas cuando hace falta, columna `Vertices` (`x y;x y;…`) si se
+  pide `includeCoordinates`.
+- **Bug 4 — `lot_line_adjust` nunca funcionó:** probaba por reflexión `AdjustLotLine` y `SlideAngle`,
+  que **no existen** en Civil 3D 2026 (ni en `AeccDbMgd.dll` ni en `Autodesk.AECC.Interop.Land.dll`;
+  los nombres no aparecen en ninguna de las dos) → no hacía nada y devolvía «Lot line adjustment
+  attempted». Además suponía el dibujo en pies. **Fix:** `targetAreaSqFt` se convierte a unidades del
+  dibujo con `SquareMetersPerDrawingUnit`; si ningún método se pudo invocar → `CIVIL3D.NOT_SUPPORTED`
+  explícito. Ajustar linderos de verdad (mover el segmento iterando hasta el área) queda como
+  pendiente.
+- **Estado bugs 3 y 4:** compila (0 errores, 0 advertencias), ✅ **probado en vivo** sobre
+  `loteo-prueba-sacredgitza-etapa2.dwg`: CSV de las 85 parcelas con punto decimal, 5 columnas en
+  todas las filas y suma 38.400,000 m²; con `includeCoordinates`, columna `Vertices` correcta (M1-10,
+  Calle 3 S, EV); `lot_line_adjust` → `CIVIL3D.NOT_SUPPORTED` y el dibujo sin cambios
+  (`unsavedChanges: false`, 85 parcelas). CSV de prueba borrados.
+
+### Trampa de `create_many`: región ya cerrada por segmentos de otras parcelas
+
+- **Qué pasó (etapa 2 del loteo, rehecha desde cero):** lote de 85 parcelas (80 lotes + EV + 4
+  calles) → falló la última, `parcels[84] 'Calle 3 N' was not created (84 created before it; the
+  batch is not committed)`. El rollback funcionó (`list` → 0 parcelas).
+- **Causa:** Civil 3D forma una parcela por **cada región cerrada** de la red de segmentos del Site,
+  no por polilínea. La región de Calle 3 N ya estaba rodeada por los lotes de M3/M4 + Calle 1; al
+  agregar Calle 2 (anterior en la lista) se cerraron **dos regiones a la vez** (Calle 2 y Calle 3 N).
+  Después, el polígono de Calle 3 N solo agregó segmentos superpuestos → ninguna parcela nueva →
+  error. El mensaje ("Check that the boundary is closed") confunde: el contorno estaba bien.
+  Riesgo adicional: cuando un `AddFromEntity` forma más de una parcela, hoy no está garantizado cuál
+  recibe el nombre.
+- **Workaround usado:** reordenar para que cada polígono sea el que cierra su propia región (Calle 3 N
+  antes que Calle 2) → 85/85 creadas, nombres y áreas correctos.
+- **Fix (`ParcelEditingCommands.cs`):** las parcelas que forma cada `AddFromEntity` (0, 1 o varias)
+  van a una lista `unclaimed`; cada ítem reclama la que coincide con **su** polígono
+  (`MatchParcelToPolygon`: área igual, tolerancia `max(1e-3, área·1e-6)`, **y** caja envolvente
+  `GeometricExtents` igual a la del polígono, tolerancia `max(1e-3, lado·1e-6)`; si no hay extents,
+  acepta una única coincidencia por área). Antes de cada match se descartan ids que ya no existen
+  (una región puede partirse con segmentos posteriores). Lo que sobra al final se devuelve en
+  `unassignedParcels` en vez de ignorarse. El error ahora dice el área esperada y lista las
+  candidatas sin reclamar (handle, área, extents). `create` (una parcela, por puntos) usa el mismo
+  match. Refactor: `ParsePolygon` / `AddPolygonSegments` / `PolygonArea` / `DescribeParcels`; la
+  polilínea temporal se borra siempre (antes quedaba en el dibujo si no se formaba parcela).
+- **Trampa de la API:** `Parcel.Centroid` devuelve **(0, 0)** en parcelas formadas dentro de la
+  transacción todavía abierta (visto con el diagnóstico: `731D area=870.9997 centroid=(0.000,
+  0.000)`). El primer intento del fix usaba el centroide y fallaba al empatar Calle 3 S / Calle 3 N
+  (misma área) → se cambió a extents.
+- **Estado:** compila (0 errores, 0 advertencias), 426/426 tests TS, ✅ **probado en vivo** (dibujo
+  métrico nuevo sin guardar, Site "Prueba"): el lote de 85 con el orden que fallaba → `createdCount:
+  85`, `totalArea: 38400`, `unassignedParcels: []`; Calle 3 N reclamó la región `731D` formada al
+  agregar Calle 2, Calle 3 S la suya (`7321`).
+
+### Configuración compartida para Claude Code
+
+- **`.mcp.json`** (nuevo, raíz del repo): declara el servidor `civil3d-mcp` apuntando a
+  `scripts/claude-bootstrap-and-run.ps1` (ruta relativa; el script ya resuelve todo desde
+  `$PSScriptRoot`). Quien abra Claude Code en este repo tiene el MCP sin configurar nada (Claude Code
+  pide aprobar el `.mcp.json` la primera vez).
+- **`.gitignore`**: `.claude` → `.claude/*` + `!.claude/settings.json`, para poder versionar los
+  permisos compartidos.
+- **`.claude/settings.json`** (nuevo): `{"permissions":{"allow":["mcp__civil3d-mcp"]}}` — lo creó
+  Santi a mano porque el clasificador de permisos de Claude Code bloqueó la escritura. Sin esa regla, en modo
+  auto se bloquea `civil3d_request_approval` y no se puede modificar el dibujo (pasó en la etapa 2).
+  Solo aplica a Claude Code; otros clientes (Claude Desktop, etc.) tienen su propio esquema.
+- **Estado:** archivos creados; sin probar todavía abriendo Claude Code en este repo.
+
+### Nueva acción `civil3d_parcel` → `create_many` (parcelas en lote)
+
+- **Archivos:** `ParcelEditingCommands.cs` (`CreateParcelsAsync` + helper `SignedArea`),
+  `CommandDispatcher.cs` (método `createParcels`), `src/tools/domains/parcelDomain.ts` (acción
+  `create_many`), tests en `tests/parcel_create_many.test.ts` + `domain_manifest.test.ts`.
+- **Por qué:** en la etapa 2 del loteo (primera corrida, descartada), 78 parcelas = 156 llamadas (~14 min), porque cada aprobación
+  queda atada al fingerprint del dibujo y este cambia con cada parcela. Única desventaja vs. HMK en
+  esa etapa.
+- **Cómo:** `{ siteName, parcels: [{ name?, points, style?, areaLabelStyle? }] }`, de 1 a 300 por
+  llamada; **una sola aprobación** (el hash cubre la lista entera). Antes de crear nada valida todo
+  (≥ 3 vértices, área no nula, nombres sin repetir en el lote ni en el Site) → un error de entrada
+  nunca deja un lote a medias. Crea en el orden recibido, dentro de una sola transacción, con el mismo
+  mecanismo COM que `create`. Si Civil 3D falla a mitad de camino, tira error con índice + nombre y
+  la transacción no se confirma. Devuelve `createdCount`, `totalArea` y, por parcela, nombre, handle,
+  área y perímetro.
+- **Rollback verificado en vivo:** lote de 3 donde la 3.ª repite la geometría de la 1.ª (pasa la
+  validación, Civil 3D no puede formar parcela) → error `parcels[2] 'T-FALLA' was not created (2
+  created before it; the batch is not committed)` en 246 ms, y `list` devuelve **0 parcelas**: lo
+  creado por COM se deshace con la transacción.
+- **Caso real verificado en vivo (primera corrida de la etapa 2, descartada — sus dibujos se borraron; la
+  corrida válida es la de la sesión limpia, ver «Trampa de `create_many`» arriba):** las 78 parcelas en **una sola llamada**
+  (`createdCount: 78`, `totalArea: 38400`, áreas idénticas a la etapa 2 hecha de a una). Etapa 2b
+  completa (Site + 78 parcelas + 3 ejes + guardar) en ~2 min y 14 llamadas, contra ~14 min y ~166
+  llamadas antes. Dibujo: `loteo-prueba-sacredgitza-etapa2-lote.dwg`.
+- **Detalle:** el schema de la tool que ve Claude Code queda cacheado hasta reiniciar la sesión
+  (después de `/mcp` reconnect seguía sin `create_many`), pero el servidor ya la acepta.
+- **Estado:** compila (0 errores, 0 advertencias), `npm run build` OK, **426/426 tests OK** (4
+  nuevos), ✅ **probado en vivo** (Civil 3D 2026, 10-08).
+
+### Prueba del loteo, etapa 2 — primera corrida (descartada)
+
+> Corrida invalidada para repetirla en una sesión limpia (sin contexto del diseño previo ni del de
+> HMK). Se deja como historia; el resultado válido de la etapa 2 (80 lotes, 85 parcelas con
+> `create_many`, `loteo-prueba-sacredgitza-etapa2.dwg`) está en la sección 9 de
+> `investigacion-mcp-civil3d.md`.
+
+Etapa 2b completa sin código y **sin bugs**: Site + 78 parcelas + ejes, áreas exactas (38.400,00 m²).
+Detalle en la sección 9 de `investigacion-mcp-civil3d.md` (app-itza2026). Limitación encontrada:
+**no hay creación en lote** — el token de aprobación está atado al fingerprint del dibujo, que cambia
+con cada objeto creado, así que 78 parcelas = 156 llamadas (~14 min). Ver pendientes.
+
+---
+
 ## 10-07 (2026)
 
 ### Renombre a sacred-g-itza
@@ -150,8 +282,19 @@ exterior), idéntica a HMK. En el camino aparecieron:
 
 ## Pendientes
 
-- Repetir con este fork las etapas 2–5 de la prueba del loteo que se hizo con HMK (datos en
+- Repetir con este fork las etapas 3–5 de la prueba (1 y 2 hechas) del loteo que se hizo con HMK (datos en
   `app-itza2026/docs/itza360-agentica/archivos/loteo/`) para comparar gratis vs. pago.
 - Faltantes detectados vs. HMK: ejecutor de C# en caliente (Roslyn), crear corredor, insertar
   bloques.
 - Bug abierto: `civil3d_standards` devuelve `name: null` en estilos.
+- `civil3d_parcel lot_line_adjust`: implementar el ajuste real (hoy devuelve `NOT_SUPPORTED` porque la
+  API de Civil 3D no trae el método; ver 10-08).
+- **Para analizar después — lote genérico:** una tool `civil3d_batch` que ejecute una lista de
+  acciones de cualquier dominio (polilíneas, puntos, parcelas, estructuras…) con una sola aprobación.
+  Ventaja: sirve para todas las etapas (ej. etapa 5: 23 columnas + 140 árboles) sin programar un
+  `create_many` por dominio. A resolver: (1) la política de aprobación hoy firma `toolName + action +
+  parámetros + fingerprint` → habría que aprobar el lote entero (hash de todas las acciones) y que las
+  acciones internas no pidan token propio; (2) atomicidad entre dominios distintos (¿una transacción
+  para todo o rollback por acción?); (3) límite de tamaño y timeout (`CIVIL3D_COMMAND_TIMEOUT`, 120 s
+  por defecto); (4) reporte de resultados por ítem. HMK lo resuelve con `execute_civil_code` (C#
+  arbitrario), que es más flexible pero más riesgoso.

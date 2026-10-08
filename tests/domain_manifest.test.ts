@@ -191,6 +191,7 @@ describe("domain manifest migration", () => {
     expect(parcel).toBeDefined();
     expect(parcel!.operations).toContain("list_sites");
     expect(parcel!.operations).toContain("create");
+    expect(parcel!.operations).toContain("create_many");
     expect(parcel!.operations).toContain("edit");
     expect(parcel!.operations).toContain("lot_line_adjust");
     expect(parcel!.operations).toContain("report");

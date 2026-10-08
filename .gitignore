@@ -17,7 +17,8 @@ dist/
 .DS_Store
 
 # Claude
-.claude
+.claude/*
+!.claude/settings.json
 .claude.md.local
 
 # Python

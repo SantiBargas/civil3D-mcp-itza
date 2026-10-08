@@ -88,7 +88,14 @@ fuente de verdad del estado de fixes y bugs abiertos — no duplicarlo acá.
 - **API de Civil 3D:** varias operaciones de creación no existen en la API .NET (ej. parcelas) y
   solo están en COM (`obj.AcadObject` + `dynamic`). Antes de asumir que un método existe,
   verificarlo leyendo la metadata de `C_References\AeccDbMgd.dll` (`System.Reflection.Metadata`),
-  no por prueba y error con reflexión.
+  no por prueba y error con reflexión. Para COM, la metadata está en
+  `C:\Program Files\Autodesk\AutoCAD 2026\C3D\Autodesk.AECC.Interop.*.dll` (ej. `...Land.dll`:
+  parcelas, loops, segmentos). En PowerShell 5.1 no se puede (falta `System.Reflection.Metadata`):
+  usar un proyecto de consola chico con `dotnet run` en una carpeta temporal.
+- **Al cerrar Civil 3D para recompilar casi siempre queda un `acad.exe` vivo sin ventana** (bloquea
+  la copia a `bin\`): chequear con `Get-Process acad` y **pedir permiso** antes de matarlo.
+- **Probar fixes en un dibujo nuevo sin guardar** (`civil3d_drawing new` con la plantilla métrica) y
+  no sobre los dibujos de la prueba del loteo; el token de aprobación es de un solo uso.
 - **HMK CAD Pilot es comercial:** se documenta su comportamiento y se reimplementa; nunca copiar ni
   descompilar sus DLLs.
 
@@ -109,8 +116,10 @@ ClickUp `90171542241`, lista **"ITZA App"** (dentro del space "ITZA Dev"):
 
 - **Qué hacer en la próxima sesión:** "Qué hacer ahora" de la tarea ITZA360 en
   `C:\Users\santi\Desktop\app-itza2026\docs\tareas.md` (y el último punto de la sección 7 del doc
-  principal). A 2026-10-07: seguir la prueba del loteo desde la **etapa 2** — datos en
+  principal). A 10-08: etapas 1 y 2 del loteo hechas; sigue la **etapa 3** (obra lineal de la
+  Calle 3 → corredor → volúmenes) — el traspaso completo (datos, regla de la prueba, qué no leer
+  antes de proponer, procedimiento) está en `tareas.md` bajo «Traspaso para la etapa 3». Datos en
   `app-itza2026\docs\itza360-agentica\archivos\loteo\`, resultados etapa por etapa en la sección 9
-  del doc principal (columna sacred-g-itza vs. HMK).
+  del doc principal (columna sacred-g-itza vs. HMK). Hueco esperado: crear un corredor desde cero.
 - **Pendientes técnicos del fork:** al final de [`CAMBIOS_ITZA.md`](CAMBIOS_ITZA.md).
 - Se mantiene actualizado allá, no acá, para no duplicar.
