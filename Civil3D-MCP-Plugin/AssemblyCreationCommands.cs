@@ -23,6 +23,14 @@ public static class AssemblyCreationCommands
         {
           var summary = ToAssemblySummary(assembly);
           summary["usedByCorridors"] = new List<string>();
+          // Layers of the assembly and its subassemblies, to freeze them in sheet viewports.
+          var layers = new SortedSet<string>(StringComparer.OrdinalIgnoreCase) { assembly.Layer };
+          foreach (ObjectId subassemblyId in GetSubassemblyIds(assembly))
+          {
+            if (transaction.GetObject(subassemblyId, OpenMode.ForRead) is Autodesk.AutoCAD.DatabaseServices.Entity subassembly)
+              layers.Add(subassembly.Layer);
+          }
+          summary["layers"] = layers.ToList();
           return summary;
         })
         .ToList();
@@ -37,20 +45,7 @@ public static class AssemblyCreationCommands
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var assembly = FindAssemblyByName(civilDoc, transaction, name, OpenMode.ForRead);
-      var usedByCorridors = new List<string>();
-
-      foreach (ObjectId corridorId in civilDoc.CorridorCollection)
-      {
-        var corridor = CivilObjectUtils.GetRequiredObject<Corridor>(transaction, corridorId, OpenMode.ForRead);
-        foreach (Baseline baseline in corridor.Baselines)
-        {
-          foreach (BaselineRegion region in baseline.BaselineRegions)
-          {
-            if (region.AssemblyId == assembly.ObjectId && !usedByCorridors.Contains(corridor.Name))
-              usedByCorridors.Add(corridor.Name);
-          }
-        }
-      }
+      var usedByCorridors = GetCorridorsUsingAssembly(civilDoc, transaction, assembly.ObjectId);
 
       return new Dictionary<string, object?>
       {
@@ -63,6 +58,47 @@ public static class AssemblyCreationCommands
         ["usedByCorridors"] = usedByCorridors,
       };
     });
+  }
+
+  public static Task<object?> DeleteAssemblyAsync(JsonObject? parameters)
+  {
+    var name = PluginRuntime.GetRequiredString(parameters, "name");
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var assembly = FindAssemblyByName(civilDoc, transaction, name, OpenMode.ForWrite);
+      var usedByCorridors = GetCorridorsUsingAssembly(civilDoc, transaction, assembly.ObjectId);
+      if (usedByCorridors.Count > 0)
+        throw new JsonRpcDispatchException(
+          "CIVIL3D.INVALID_INPUT",
+          $"Assembly '{name}' is used by corridor(s) {string.Join(", ", usedByCorridors)}. Delete or edit those regions first.");
+
+      var subassemblyCount = GetSubassemblyIds(assembly).Count;
+      assembly.Erase();
+      return new Dictionary<string, object?>
+      {
+        ["name"] = name,
+        ["subassemblyCount"] = subassemblyCount,
+        ["deleted"] = true,
+      };
+    });
+  }
+
+  private static List<string> GetCorridorsUsingAssembly(CivilDocument civilDoc, Transaction transaction, ObjectId assemblyId)
+  {
+    var usedByCorridors = new List<string>();
+    foreach (ObjectId corridorId in civilDoc.CorridorCollection)
+    {
+      var corridor = CivilObjectUtils.GetRequiredObject<Corridor>(transaction, corridorId, OpenMode.ForRead);
+      foreach (Baseline baseline in corridor.Baselines)
+      {
+        foreach (BaselineRegion region in baseline.BaselineRegions)
+        {
+          if (region.AssemblyId == assemblyId && !usedByCorridors.Contains(corridor.Name))
+            usedByCorridors.Add(corridor.Name);
+        }
+      }
+    }
+    return usedByCorridors;
   }
 
   public static Task<object?> CreateAssemblyAsync(JsonObject? parameters)
@@ -105,6 +141,10 @@ public static class AssemblyCreationCommands
     if (!new[] { "Left", "Right", "Both" }.Contains(side, StringComparer.OrdinalIgnoreCase))
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "side must be Left, Right, or Both.");
 
+    var baseName = PluginRuntime.GetOptionalString(parameters, "name");
+    var attachTo = PluginRuntime.GetOptionalString(parameters, "attachTo");
+    var attachPointIndex = PluginRuntime.GetOptionalInt(parameters, "attachPointIndex");
+
     var subParams = ReadParameters(parameters?["parameters"] as JsonObject);
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -116,12 +156,28 @@ public static class AssemblyCreationCommands
 
       foreach (var requestedSide in requestedSides)
       {
-        var subassemblyName = $"{subassemblyType}-{requestedSide}-{Guid.NewGuid():N}";
+        var subassemblyName = string.IsNullOrWhiteSpace(baseName)
+          ? $"{subassemblyType}-{requestedSide}-{Guid.NewGuid():N}"
+          : requestedSides.Length > 1 ? $"{baseName}-{requestedSide}" : baseName!;
         var subassemblyId = civilDoc.SubassemblyCollection.ImportStockSubassembly(
           subassemblyName,
           subassemblyType,
           assembly.Location);
-        assembly.AddSubassembly(subassemblyId);
+
+        int? hookedPointIndex = null;
+        if (string.IsNullOrWhiteSpace(attachTo))
+        {
+          assembly.AddSubassembly(subassemblyId);
+        }
+        else
+        {
+          // AddSubassembly(id) alone always starts a new group at the baseline point;
+          // chaining needs the overload that takes a point of the parent subassembly.
+          var parent = FindAttachParent(assembly, transaction, attachTo!, requestedSide, requestedSides.Length > 1);
+          var hookPoint = ResolveHookPoint(parent, attachPointIndex);
+          assembly.AddSubassembly(subassemblyId, hookPoint);
+          hookedPointIndex = hookPoint.Index;
+        }
 
         var subassembly = CivilObjectUtils.GetRequiredObject<AcDbObject>(transaction, subassemblyId, OpenMode.ForWrite);
         if (!Civil3DCompatibility.TrySetProperty(subassembly, "Side", requestedSide))
@@ -130,13 +186,22 @@ public static class AssemblyCreationCommands
             "CIVIL3D.API_ERROR",
             $"Stock subassembly '{subassemblyType}' does not expose a writable Side parameter. No implicit side was assumed.");
         }
-        ApplySubassemblyParameters(subassembly, subParams);
+        var applied = ApplySubassemblyParameters(subassembly, subParams);
+        if (applied.Count != subParams.Count)
+        {
+          var missing = subParams.Keys.Except(applied, StringComparer.OrdinalIgnoreCase);
+          throw new JsonRpcDispatchException(
+            "CIVIL3D.INVALID_INPUT",
+            $"Subassembly '{subassemblyType}' has no writable parameter(s): {string.Join(", ", missing)}. The transaction was not committed.");
+        }
 
         created.Add(new Dictionary<string, object?>
         {
           ["name"] = CivilObjectUtils.GetName(subassembly) ?? subassemblyName,
           ["handle"] = CivilObjectUtils.GetHandle(subassembly),
           ["side"] = requestedSide,
+          ["attachedTo"] = string.IsNullOrWhiteSpace(attachTo) ? null : attachTo,
+          ["attachPointIndex"] = hookedPointIndex,
         });
       }
 
@@ -240,6 +305,51 @@ public static class AssemblyCreationCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Assembly '{name}' was not found in the drawing.");
   }
 
+  private static Subassembly FindAttachParent(
+    Assembly assembly,
+    Transaction transaction,
+    string attachTo,
+    string side,
+    bool bothSides)
+  {
+    var candidates = bothSides ? new[] { $"{attachTo}-{side}", attachTo } : new[] { attachTo };
+    var subassemblies = GetSubassemblyIds(assembly)
+      .Select(id => CivilObjectUtils.GetRequiredObject<Subassembly>(transaction, id, OpenMode.ForRead))
+      .ToList();
+    foreach (var candidate in candidates)
+    {
+      var match = subassemblies.FirstOrDefault(sa => string.Equals(sa.Name, candidate, StringComparison.OrdinalIgnoreCase));
+      if (match != null) return match;
+    }
+    throw new JsonRpcDispatchException(
+      "CIVIL3D.OBJECT_NOT_FOUND",
+      $"Subassembly '{string.Join("' / '", candidates)}' to attach to was not found in assembly '{assembly.Name}'.");
+  }
+
+  private static Autodesk.Civil.DatabaseServices.Point ResolveHookPoint(Subassembly parent, int? pointIndex)
+  {
+    var points = parent.Points;
+    if (points.Count == 0)
+      throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", $"Subassembly '{parent.Name}' has no points to attach to.");
+
+    if (pointIndex.HasValue)
+    {
+      if (pointIndex.Value < 0 || pointIndex.Value >= points.Count)
+        throw new JsonRpcDispatchException(
+          "CIVIL3D.INVALID_INPUT",
+          $"attachPointIndex {pointIndex.Value} is out of range. Subassembly '{parent.Name}' has {points.Count} point(s).");
+      return points[pointIndex.Value];
+    }
+
+    // Default: outermost point, and the top one when several share that offset
+    // (e.g. a lane's edge of travelway above its pavement-bottom points).
+    var all = Enumerable.Range(0, points.Count).Select(i => points[i]).ToList();
+    return all
+      .OrderByDescending(p => Math.Round(Math.Abs(p.Offset), 6))
+      .ThenByDescending(p => p.Elevation)
+      .First();
+  }
+
   private static List<ObjectId> GetSubassemblyIds(Assembly assembly)
   {
     return assembly.Groups
@@ -254,10 +364,49 @@ public static class AssemblyCreationCommands
     var updated = new List<string>();
     foreach (var pair in parameters)
     {
-      if (Civil3DCompatibility.TrySetProperty(subassembly, pair.Key, pair.Value))
+      var value = UnwrapJsonValue(pair.Value);
+      // Stock subassembly inputs (Width, Slope, ...) live in the Params* collections,
+      // not as .NET properties; properties are only the fallback (e.g. Side).
+      if ((subassembly is Subassembly sa && TrySetStockParameter(sa, pair.Key, value))
+        || Civil3DCompatibility.TrySetProperty(subassembly, pair.Key, value))
         updated.Add(pair.Key);
     }
     return updated;
+  }
+
+  private static bool TrySetStockParameter(Subassembly subassembly, string key, object? value)
+  {
+    if (value == null) return false;
+    try
+    {
+      foreach (var param in subassembly.ParamsDouble)
+        if (string.Equals(param.Key, key, StringComparison.OrdinalIgnoreCase)) { param.Value = Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture); return true; }
+      foreach (var param in subassembly.ParamsLong)
+        if (string.Equals(param.Key, key, StringComparison.OrdinalIgnoreCase)) { param.Value = Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture); return true; }
+      foreach (var param in subassembly.ParamsBool)
+        if (string.Equals(param.Key, key, StringComparison.OrdinalIgnoreCase)) { param.Value = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture); return true; }
+      foreach (var param in subassembly.ParamsString)
+        if (string.Equals(param.Key, key, StringComparison.OrdinalIgnoreCase)) { param.Value = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture); return true; }
+    }
+    catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Subassembly parameter '{key}' has an invalid value: {ex.Message}");
+    }
+    return false;
+  }
+
+  // JsonNode.GetValue<object>() yields a JsonElement, which Convert.ChangeType cannot handle.
+  private static object? UnwrapJsonValue(object? value)
+  {
+    if (value is not System.Text.Json.JsonElement element) return value;
+    return element.ValueKind switch
+    {
+      System.Text.Json.JsonValueKind.Number => element.GetDouble(),
+      System.Text.Json.JsonValueKind.String => element.GetString(),
+      System.Text.Json.JsonValueKind.True => true,
+      System.Text.Json.JsonValueKind.False => false,
+      _ => null,
+    };
   }
 
   private static string? GetStyleName(Assembly assembly, Transaction transaction)
@@ -284,7 +433,25 @@ public static class AssemblyCreationCommands
       ["className"] = subassembly.GetType().Name,
       ["side"] = Civil3DCompatibility.GetPropertyValue(subassembly, "Side")?.ToString()?.ToLowerInvariant() ?? "none",
       ["parameters"] = Civil3DCompatibility.GetReadableScalarProperties(subassembly),
+      ["points"] = subassembly is Subassembly sa ? ReadSubassemblyPoints(sa) : new List<Dictionary<string, object?>>(),
     };
+  }
+
+  // Offsets/elevations are in the assembly layout (relative to the assembly baseline point);
+  // they let the caller pick attachPointIndex instead of relying on the outermost-point default.
+  private static List<Dictionary<string, object?>> ReadSubassemblyPoints(Subassembly subassembly)
+  {
+    var points = subassembly.Points;
+    return Enumerable.Range(0, points.Count)
+      .Select(i => points[i])
+      .Select(p => new Dictionary<string, object?>
+      {
+        ["index"] = p.Index,
+        ["offset"] = Math.Round(p.Offset, 4),
+        ["elevation"] = Math.Round(p.Elevation, 4),
+        ["codes"] = p.Codes.ToList(),
+      })
+      .ToList();
   }
 
   private static Dictionary<string, object?> ToAssemblySummary(Assembly assembly)

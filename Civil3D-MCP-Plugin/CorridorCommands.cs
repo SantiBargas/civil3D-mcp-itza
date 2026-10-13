@@ -44,7 +44,7 @@ public static class CorridorCommands
             ["assemblyName"] = CivilObjectUtils.GetName(transaction.GetObject(region.AssemblyId, OpenMode.ForRead)) ?? string.Empty,
             ["startStation"] = region.StartStation,
             ["endStation"] = region.EndStation,
-            ["frequency"] = 0,
+            ["frequency"] = region.AppliedAssemblySetting.FrequencyAlongTangents,
           });
         }
 
@@ -116,7 +116,7 @@ public static class CorridorCommands
               // Corridor.Rebuild() is synchronous and exposes no cancellation
               // handle. Abort before entering and after it returns.
               JobRegistry.Progress(job.JobId, 40, $"Rebuilding corridor {name}", null);
-              corridor.Rebuild();
+              CorridorEditingCommands.RebuildCorridorAndSurfaces(corridor, transaction);
               cancellationToken.ThrowIfCancellationRequested();
 
               return new Dictionary<string, object?>
@@ -210,7 +210,9 @@ public static class CorridorCommands
       var corridor = CivilObjectUtils.FindCorridorByName(civilDoc, transaction, name, OpenMode.ForRead);
       var corridorSurface = FindCorridorSurfaceByName(corridor, corridorSurfaceName, transaction);
       var referenceSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, referenceSurfaceName, OpenMode.ForRead);
-      return ComputeVolumeBetweenSurfaces(database, transaction, corridorSurface, referenceSurface);
+      // Civil 3D convention: base = existing ground, comparison = design; cut = comparison below base.
+      // The corridor surface used to be passed as base, which swapped cut and fill.
+      return ComputeVolumeBetweenSurfaces(database, transaction, referenceSurface, corridorSurface);
     });
   }
 

@@ -159,6 +159,59 @@ const CorridorTargetMappingSetArgsSchema = z.object({
   })),
 });
 
+const CorridorSurfaceRequestSchema = z.object({
+  name: z.string(),
+  // Defaults to ["Top"] in the plugin when omitted or empty.
+  linkCodes: z.array(z.string()).optional(),
+});
+
+const CorridorCreateArgsSchema = z.object({
+  action: z.literal("create"),
+  name: z.string(),
+  alignmentName: z.string(),
+  profileName: z.string(),
+  assemblyName: z.string(),
+  startStation: z.number().optional(),
+  endStation: z.number().optional(),
+  frequency: z.number().positive().optional(),
+  frequencyAtCurves: z.number().positive().optional(),
+  targetSurface: z.string().optional(),
+  corridorSurfaces: z.array(CorridorSurfaceRequestSchema).optional(),
+});
+
+const CorridorDeleteArgsSchema = z.object({
+  action: z.literal("delete"),
+  name: z.string(),
+});
+
+const CorridorSurfaceAddArgsSchema = z.object({
+  action: z.literal("surface_add"),
+  name: z.string(),
+  corridorSurfaces: z.array(CorridorSurfaceRequestSchema).min(1),
+});
+
+const CorridorSurfaceDeleteArgsSchema = z.object({
+  action: z.literal("surface_delete"),
+  name: z.string(),
+  corridorSurface: z.string(),
+});
+
+const CorridorRegionEditArgsSchema = z.object({
+  action: z.literal("region_edit"),
+  name: z.string(),
+  baselineIndex: z.number().int().nonnegative().optional(),
+  regionIndex: z.number().int().nonnegative(),
+  startStation: z.number().optional(),
+  endStation: z.number().optional(),
+  assemblyName: z.string().optional(),
+  frequency: z.number().positive().optional(),
+  frequencyAtCurves: z.number().positive().optional(),
+}).refine(
+  (args) => args.startStation !== undefined || args.endStation !== undefined || args.assemblyName !== undefined
+    || args.frequency !== undefined || args.frequencyAtCurves !== undefined,
+  { message: "Pass at least one of startStation, endStation, assemblyName, frequency or frequencyAtCurves." },
+);
+
 const CorridorRegionAddArgsSchema = z.object({
   action: z.literal("region_add"),
   name: z.string(),
@@ -169,6 +222,7 @@ const CorridorRegionAddArgsSchema = z.object({
   frequency: z.number().positive().optional(),
   frequencyAtCurves: z.number().positive().optional(),
   frequencyAtKneePoints: z.number().positive().optional(),
+  targetSurface: z.string().optional(),
 });
 
 const CorridorRegionDeleteArgsSchema = z.object({
@@ -191,10 +245,19 @@ const canonicalCorridorInputShape = {
     "summary",
     "target_mapping_get",
     "target_mapping_set",
+    "create",
+    "delete",
+    "surface_add",
+    "surface_delete",
     "region_add",
+    "region_edit",
     "region_delete",
   ]),
   name: z.string().optional(),
+  alignmentName: z.string().optional(),
+  profileName: z.string().optional(),
+  targetSurface: z.string().optional(),
+  corridorSurfaces: z.array(CorridorSurfaceRequestSchema).optional(),
   corridorSurface: z.string().optional(),
   referenceSurface: z.string().optional(),
   regionIndex: z.number().int().nonnegative().optional(),
@@ -398,6 +461,94 @@ export const CORRIDOR_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    create: {
+      action: "create",
+      inputSchema: CorridorCreateArgsSchema,
+      responseSchema: GenericCorridorResponseSchema,
+      capabilities: ["create"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["createCorridor"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("createCorridor", {
+          corridorName: args.name,
+          alignmentName: args.alignmentName,
+          profileName: args.profileName,
+          assemblyName: args.assemblyName,
+          startStation: args.startStation ?? null,
+          endStation: args.endStation ?? null,
+          frequency: args.frequency ?? 10,
+          frequencyAtCurves: args.frequencyAtCurves ?? null,
+          targetSurface: args.targetSurface ?? null,
+          corridorSurfaces: args.corridorSurfaces ?? [],
+        }),
+      ),
+    },
+    delete: {
+      action: "delete",
+      inputSchema: CorridorDeleteArgsSchema,
+      responseSchema: GenericCorridorResponseSchema,
+      capabilities: ["delete"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["deleteCorridor"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("deleteCorridor", {
+          corridorName: args.name,
+        }),
+      ),
+    },
+    surface_add: {
+      action: "surface_add",
+      inputSchema: CorridorSurfaceAddArgsSchema,
+      responseSchema: GenericCorridorResponseSchema,
+      capabilities: ["create", "edit"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["addCorridorSurfaces"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("addCorridorSurfaces", {
+          corridorName: args.name,
+          corridorSurfaces: args.corridorSurfaces,
+        }),
+      ),
+    },
+    surface_delete: {
+      action: "surface_delete",
+      inputSchema: CorridorSurfaceDeleteArgsSchema,
+      responseSchema: GenericCorridorResponseSchema,
+      capabilities: ["delete", "edit"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["deleteCorridorSurface"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("deleteCorridorSurface", {
+          corridorName: args.name,
+          corridorSurface: args.corridorSurface,
+        }),
+      ),
+    },
+    region_edit: {
+      action: "region_edit",
+      inputSchema: CorridorRegionEditArgsSchema,
+      responseSchema: GenericCorridorResponseSchema,
+      capabilities: ["edit"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["editCorridorRegion"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("editCorridorRegion", {
+          corridorName: args.name,
+          baselineIndex: args.baselineIndex ?? 0,
+          regionIndex: args.regionIndex,
+          startStation: args.startStation ?? null,
+          endStation: args.endStation ?? null,
+          assemblyName: args.assemblyName ?? null,
+          frequency: args.frequency ?? null,
+          frequencyAtCurves: args.frequencyAtCurves ?? null,
+        }),
+      ),
+    },
     region_add: {
       action: "region_add",
       inputSchema: CorridorRegionAddArgsSchema,
@@ -416,6 +567,7 @@ export const CORRIDOR_DOMAIN_DEFINITION: DomainToolDefinition = {
           frequency: args.frequency ?? 10,
           frequencyAtCurves: args.frequencyAtCurves ?? null,
           frequencyAtKneePoints: args.frequencyAtKneePoints ?? null,
+          targetSurface: args.targetSurface ?? null,
         }),
       ),
     },
@@ -440,7 +592,7 @@ export const CORRIDOR_DOMAIN_DEFINITION: DomainToolDefinition = {
     {
       toolName: "civil3d_corridor",
       displayName: "Civil 3D Corridor",
-      description: "Reads Civil 3D corridor data, controls rebuild, computes volumes, and manages regions and target mappings through a single domain tool.",
+      description: "Reads Civil 3D corridor data, creates and deletes corridors and corridor surfaces, controls rebuild, computes volumes, and manages regions and target mappings through a single domain tool.",
       inputShape: canonicalCorridorInputShape,
       supportedActions: [
         "list",
@@ -452,7 +604,12 @@ export const CORRIDOR_DOMAIN_DEFINITION: DomainToolDefinition = {
         "summary",
         "target_mapping_get",
         "target_mapping_set",
+        "create",
+        "delete",
+        "surface_add",
+        "surface_delete",
         "region_add",
+        "region_edit",
         "region_delete",
       ],
       resolveAction: (rawArgs) => ({

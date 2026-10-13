@@ -29,6 +29,36 @@ const SheetDetailSchema = z.object({
 
 const GenericPlanProductionResponseSchema = z.object({}).passthrough();
 
+const MAX_SHEET_ENTITIES = 2000;
+
+const ViewportSpecSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  width: z.number().positive(),
+  height: z.number().positive(),
+  viewCenterX: z.number(),
+  viewCenterY: z.number(),
+  scale: z.number().positive(),
+  frozenLayers: z.array(z.string()).optional(),
+  locked: z.boolean().optional(),
+  annotationScale: z.string().optional(),
+});
+
+const SheetLineSchema = z.object({ x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() });
+const SheetPointSchema = z.union([z.tuple([z.number(), z.number()]), z.object({ x: z.number(), y: z.number() })]);
+const SheetPolylineSchema = z.object({ points: z.array(SheetPointSchema).min(2), closed: z.boolean().optional(), width: z.number().nonnegative().optional() });
+const TextAlignSchema = z.enum(["left", "center", "right", "middle-left", "middle-center", "middle-right"]);
+const SheetTextSchema = z.object({ text: z.string().min(1), x: z.number(), y: z.number(), height: z.number().positive(), align: TextAlignSchema.optional(), rotation: z.number().optional() });
+const SheetTableSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  rowHeight: z.number().positive(),
+  textHeight: z.number().positive().optional(),
+  columnWidths: z.array(z.number().positive()).min(1),
+  columnAlign: z.array(z.enum(["left", "center", "right"])).optional(),
+  rows: z.array(z.array(z.string())).min(1),
+});
+
 const canonicalPlanProductionInputShape = {
   action: z.enum([
     "sheet_set_list",
@@ -42,7 +72,26 @@ const canonicalPlanProductionInputShape = {
     "sheet_view_set_scale",
     "sheet_publish_pdf",
     "sheet_set_export",
+    "layout_create",
+    "layout_add_entities",
+    "layout_viewport_scale",
+    "layout_delete",
+    "layout_viewport_freeze",
+    "layer_list",
   ]),
+  layers: z.array(z.string()).optional(),
+  thaw: z.boolean().optional(),
+  annotationScale: z.string().optional(),
+  device: z.string().optional(),
+  paperWidth: z.number().optional(),
+  paperHeight: z.number().optional(),
+  media: z.string().optional(),
+  viewports: z.array(ViewportSpecSchema).optional(),
+  layer: z.string().optional(),
+  lines: z.array(SheetLineSchema).optional(),
+  polylines: z.array(SheetPolylineSchema).optional(),
+  texts: z.array(SheetTextSchema).optional(),
+  tables: z.array(SheetTableSchema).optional(),
   name: z.string().optional(),
   description: z.string().optional(),
   sheetSetName: z.string().optional(),
@@ -160,9 +209,137 @@ const SheetSetExportArgsSchema = z.object({
   plotStyleTable: z.string().optional(),
 });
 
+const LayoutCreateArgsSchema = z.object({
+  action: z.literal("layout_create"),
+  layoutName: z.string().min(1),
+  device: z.string().optional(),
+  paperWidth: z.number().positive().optional(),
+  paperHeight: z.number().positive().optional(),
+  media: z.string().optional(),
+  viewports: z.array(ViewportSpecSchema).max(10).optional(),
+});
+
+const LayoutAddEntitiesArgsSchema = z.object({
+  action: z.literal("layout_add_entities"),
+  layoutName: z.string().min(1),
+  layer: z.string().optional(),
+  lines: z.array(SheetLineSchema).max(MAX_SHEET_ENTITIES).optional(),
+  polylines: z.array(SheetPolylineSchema).max(MAX_SHEET_ENTITIES).optional(),
+  texts: z.array(SheetTextSchema).max(MAX_SHEET_ENTITIES).optional(),
+  tables: z.array(SheetTableSchema).max(50).optional(),
+}).superRefine((value, ctx) => {
+  const total = (value.lines?.length ?? 0) + (value.polylines?.length ?? 0) + (value.texts?.length ?? 0) + (value.tables?.length ?? 0);
+  if (total === 0) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Provide at least one line, polyline, text or table.", path: ["lines"] });
+});
+
+const LayerListArgsSchema = z.object({ action: z.literal("layer_list") });
+
+const LayoutViewportFreezeArgsSchema = z.object({ action: z.literal("layout_viewport_freeze"), layoutName: z.string().min(1), layers: z.array(z.string().min(1)).min(1).max(200), thaw: z.boolean().optional() });
+
+const LayoutDeleteArgsSchema = z.object({ action: z.literal("layout_delete"), layoutName: z.string().min(1) });
+
+const LayoutViewportScaleArgsSchema = z.object({
+  action: z.literal("layout_viewport_scale"),
+  layoutName: z.string().min(1),
+  scale: z.number().positive(),
+  viewportHandle: z.string().optional(),
+  annotationScale: z.string().optional(),
+});
+
 export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "plan_production",
   actions: {
+    layout_create: {
+      action: "layout_create",
+      inputSchema: LayoutCreateArgsSchema,
+      responseSchema: GenericPlanProductionResponseSchema,
+      capabilities: ["create"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["createLayout"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("createLayout", {
+          layoutName: args.layoutName,
+          device: args.device,
+          paperWidth: args.paperWidth,
+          paperHeight: args.paperHeight,
+          media: args.media,
+          viewports: args.viewports ?? [],
+        }),
+      ),
+    },
+    layout_add_entities: {
+      action: "layout_add_entities",
+      inputSchema: LayoutAddEntitiesArgsSchema,
+      responseSchema: GenericPlanProductionResponseSchema,
+      capabilities: ["create"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["addLayoutEntities"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("addLayoutEntities", {
+          layoutName: args.layoutName,
+          layer: args.layer,
+          lines: args.lines ?? [],
+          polylines: args.polylines ?? [],
+          texts: args.texts ?? [],
+          tables: args.tables ?? [],
+        }),
+      ),
+    },
+    layout_viewport_scale: {
+      action: "layout_viewport_scale",
+      inputSchema: LayoutViewportScaleArgsSchema,
+      responseSchema: GenericPlanProductionResponseSchema,
+      capabilities: ["edit"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["setViewportScale"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("setViewportScale", {
+          layoutName: args.layoutName,
+          scale: args.scale,
+          viewportHandle: args.viewportHandle,
+          annotationScale: args.annotationScale,
+        }),
+      ),
+    },
+    layout_viewport_freeze: {
+      action: "layout_viewport_freeze",
+      inputSchema: LayoutViewportFreezeArgsSchema,
+      responseSchema: GenericPlanProductionResponseSchema,
+      capabilities: ["edit"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["freezeViewportLayers"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("freezeViewportLayers", { layoutName: args.layoutName, layers: args.layers, thaw: args.thaw ?? false }),
+      ),
+    },
+    layout_delete: {
+      action: "layout_delete",
+      inputSchema: LayoutDeleteArgsSchema,
+      responseSchema: GenericPlanProductionResponseSchema,
+      capabilities: ["delete"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["deleteLayout"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("deleteLayout", { layoutName: args.layoutName }),
+      ),
+    },
+    layer_list: {
+      action: "layer_list",
+      inputSchema: LayerListArgsSchema,
+      responseSchema: GenericPlanProductionResponseSchema,
+      capabilities: ["query", "inspect"],
+      requiresActiveDrawing: true,
+      safeForRetry: true,
+      pluginMethods: ["listLayers"],
+      execute: async () => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("listLayers", {}),
+      ),
+    },
     sheet_set_list: {
       action: "sheet_set_list",
       inputSchema: SheetSetListArgsSchema,
@@ -393,6 +570,12 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
         "sheet_view_set_scale",
         "sheet_publish_pdf",
         "sheet_set_export",
+        "layout_create",
+        "layout_add_entities",
+        "layout_viewport_scale",
+        "layout_delete",
+        "layout_viewport_freeze",
+        "layer_list",
       ],
       resolveAction: (rawArgs) => ({ action: String(rawArgs.action ?? ""), args: rawArgs }),
     },

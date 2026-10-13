@@ -1,13 +1,14 @@
-using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.Geometry;
+using Autodesk.Civil.ApplicationServices;
+using Autodesk.Civil.DatabaseServices;
 
 namespace Civil3DMcpPlugin;
 
 /// <summary>
 /// Hydraulic analysis commands for gravity pipe networks.
 /// Implements Manning's equation, HGL backwater analysis, and structure property queries.
+/// Units follow the drawing: metric drawings use m, m³/s and m/s; imperial drawings use ft, cfs and ft/s.
 /// </summary>
 public static class PipeHydraulicsCommands
 {
@@ -19,12 +20,13 @@ public static class PipeHydraulicsCommands
     var tailwaterElevation = PluginRuntime.GetOptionalDouble(parameters, "tailwaterElevation");
     var designFlow = PluginRuntime.GetOptionalDouble(parameters, "designFlow");
     var manningsN = PluginRuntime.GetOptionalDouble(parameters, "manningsN") ?? 0.013;
+    var perPipeFlows = ReadPerPipeFlows(parameters);
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
+      var units = HydraulicUnits.For(database);
       var network = FindPipeNetworkByName(civilDoc, transaction, networkName);
       var pipes = GetPipeData(network, transaction);
-      var structures = GetStructureData(network, transaction);
 
       if (pipes.Count == 0)
       {
@@ -37,60 +39,77 @@ public static class PipeHydraulicsCommands
         };
       }
 
-      // Sort pipes upstream to downstream by invert elevation (lowest invert = downstream)
-      var sortedPipes = pipes.OrderByDescending(p => p.InvertIn).ToList();
-      var outletInvert = sortedPipes.Last().InvertOut;
-      var hglAtOutlet = tailwaterElevation ?? outletInvert;
+      // Pipes run start → end in flow direction. Outlets are pipes whose end structure feeds no other pipe.
+      var startsAt = pipes.Where(p => !p.StartStructureId.IsNull).ToLookup(p => p.StartStructureId);
+      var endsAt = pipes.Where(p => !p.EndStructureId.IsNull).ToLookup(p => p.EndStructureId);
+      var outlets = pipes.Where(p => p.EndStructureId.IsNull || !startsAt.Contains(p.EndStructureId)).ToList();
 
-      // Build HGL table — simple backwater walk
+      var nodeHgl = new Dictionary<ObjectId, double>();
+      var visited = new HashSet<ObjectId>();
       var nodes = new List<Dictionary<string, object?>>();
-      var currentHgl = hglAtOutlet;
+      var queue = new Queue<PipeInfo>(outlets);
 
-      for (int i = sortedPipes.Count - 1; i >= 0; i--)
+      while (queue.Count > 0)
       {
-        var pipe = sortedPipes[i];
-        double diameter = pipe.Diameter;
-        double length = pipe.Length;
-        double slope = Math.Abs(pipe.Slope) / 100.0; // convert % to decimal
-        double area = Math.PI * diameter * diameter / 4.0;
-        double wetPerim = Math.PI * diameter;
-        double hydraulicRadius = diameter / 4.0;
-        double qFull = (1.0 / manningsN) * area * Math.Pow(hydraulicRadius, 2.0 / 3.0) * Math.Pow(slope, 0.5);
+        var pipe = queue.Dequeue();
+        if (!visited.Add(pipe.Id)) continue;
 
-        // Head loss in pipe (Manning's based)
-        double headLoss = (manningsN * manningsN * length * (designFlow ?? qFull) * (designFlow ?? qFull))
-                          / (Math.Pow(hydraulicRadius, 4.0 / 3.0) * area * area);
-        headLoss = Math.Max(0, headLoss);
+        var flow = ResolveFlow(pipe, perPipeFlows, designFlow);
+        var qFull = FullFlowCapacity(pipe, manningsN, units);
+        var normalDepth = flow.HasValue ? NormalDepth(flow.Value, pipe, manningsN, units) : pipe.Diameter;
+        var frictionSlope = flow.HasValue ? FullFlowFrictionSlope(flow.Value, pipe, manningsN, units) : 0.0;
 
-        var hglAtUpstream = currentHgl + headLoss;
-        var isSurcharged = hglAtUpstream > pipe.InvertIn + diameter;
+        var downstreamBoundary = pipe.EndStructureId.IsNull || !nodeHgl.TryGetValue(pipe.EndStructureId, out var endHgl)
+          ? tailwaterElevation ?? double.NegativeInfinity
+          : endHgl;
+        var hglDownstream = Math.Max(downstreamBoundary, pipe.InvertOut + normalDepth);
+        var surchargedAtOutlet = hglDownstream > pipe.InvertOut + pipe.Diameter;
+        var flowExceedsCapacity = flow.HasValue && flow.Value > qFull;
+        var hglUpstream = surchargedAtOutlet || flowExceedsCapacity
+          ? hglDownstream + frictionSlope * pipe.Length
+          : Math.Max(pipe.InvertIn + normalDepth, hglDownstream + frictionSlope * pipe.Length);
+        var surcharged = surchargedAtOutlet || flowExceedsCapacity || hglUpstream > pipe.InvertIn + pipe.Diameter;
 
         nodes.Add(new Dictionary<string, object?>
         {
           ["pipeName"] = pipe.Name,
+          ["startStructure"] = pipe.StartStructureName,
+          ["endStructure"] = pipe.EndStructureName,
           ["invertIn"] = Math.Round(pipe.InvertIn, 3),
           ["invertOut"] = Math.Round(pipe.InvertOut, 3),
-          ["diameter"] = Math.Round(diameter, 3),
-          ["length"] = Math.Round(length, 2),
-          ["slopePct"] = Math.Round(pipe.Slope, 4),
-          ["qFullCfs"] = Math.Round(qFull, 3),
-          ["hglDownstream"] = Math.Round(currentHgl, 3),
-          ["hglUpstream"] = Math.Round(hglAtUpstream, 3),
-          ["headLoss"] = Math.Round(headLoss, 3),
-          ["surcharged"] = isSurcharged,
-          ["status"] = isSurcharged ? "SURCHARGED" : "FREE_SURFACE",
+          ["diameter"] = Math.Round(pipe.Diameter, 3),
+          ["length"] = Math.Round(pipe.Length, 2),
+          ["slopePct"] = Math.Round(pipe.SlopePct, 3),
+          ["designFlow"] = flow.HasValue ? Math.Round(flow.Value, 4) : null,
+          ["qFull"] = Math.Round(qFull, 4),
+          ["normalDepth"] = flow.HasValue ? Math.Round(normalDepth, 3) : null,
+          ["hglDownstream"] = Math.Round(hglDownstream, 3),
+          ["hglUpstream"] = Math.Round(hglUpstream, 3),
+          ["surcharged"] = surcharged,
+          ["status"] = surcharged ? "SURCHARGED" : "FREE_SURFACE",
         });
 
-        currentHgl = hglAtUpstream;
+        if (!pipe.StartStructureId.IsNull)
+        {
+          nodeHgl[pipe.StartStructureId] = nodeHgl.TryGetValue(pipe.StartStructureId, out var existing)
+            ? Math.Max(existing, hglUpstream)
+            : hglUpstream;
+          foreach (var upstream in endsAt[pipe.StartStructureId])
+            queue.Enqueue(upstream);
+        }
       }
 
       return new Dictionary<string, object?>
       {
         ["networkName"] = networkName,
-        ["tailwaterElevation"] = Math.Round(hglAtOutlet, 3),
+        ["units"] = units.Describe(),
+        ["method"] = "Normal depth per pipe (Manning) with full-flow friction slope carried upstream; structure losses ignored.",
+        ["tailwaterElevation"] = tailwaterElevation,
         ["manningsN"] = manningsN,
         ["designFlow"] = designFlow,
         ["pipeCount"] = pipes.Count,
+        ["outlets"] = outlets.Select(p => p.Name).ToList(),
+        ["unreachedPipes"] = pipes.Where(p => !visited.Contains(p.Id)).Select(p => p.Name).ToList(),
         ["surchargedCount"] = nodes.Count(n => (bool)(n["surcharged"] ?? false)),
         ["nodes"] = nodes,
       };
@@ -104,13 +123,20 @@ public static class PipeHydraulicsCommands
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
     var designFlow = PluginRuntime.GetOptionalDouble(parameters, "designFlow");
     var manningsN = PluginRuntime.GetOptionalDouble(parameters, "manningsN") ?? 0.013;
-    var minCoverDepth = PluginRuntime.GetOptionalDouble(parameters, "minCoverDepth") ?? 2.0;
-    var minVelocity = PluginRuntime.GetOptionalDouble(parameters, "minVelocity") ?? 2.0;
-    var maxVelocity = PluginRuntime.GetOptionalDouble(parameters, "maxVelocity") ?? 10.0;
-    var minSlope = PluginRuntime.GetOptionalDouble(parameters, "minSlope") ?? 0.5;
+    var minCoverDepthParam = PluginRuntime.GetOptionalDouble(parameters, "minCoverDepth");
+    var minVelocityParam = PluginRuntime.GetOptionalDouble(parameters, "minVelocity");
+    var maxVelocityParam = PluginRuntime.GetOptionalDouble(parameters, "maxVelocity");
+    var minSlopeParam = PluginRuntime.GetOptionalDouble(parameters, "minSlope");
+    var perPipeFlows = ReadPerPipeFlows(parameters);
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
+      var units = HydraulicUnits.For(database);
+      var minCoverDepth = minCoverDepthParam ?? units.DefaultMinCover;
+      var minVelocity = minVelocityParam ?? units.DefaultMinVelocity;
+      var maxVelocity = maxVelocityParam ?? units.DefaultMaxVelocity;
+      var minSlope = minSlopeParam ?? units.DefaultMinSlopePct;
+
       var network = FindPipeNetworkByName(civilDoc, transaction, networkName);
       var pipes = GetPipeData(network, transaction);
       var structures = GetStructureData(network, transaction);
@@ -120,42 +146,41 @@ public static class PipeHydraulicsCommands
 
       foreach (var pipe in pipes)
       {
-        double diameter = pipe.Diameter;
-        double slope = Math.Abs(pipe.Slope) / 100.0;
-        double area = Math.PI * diameter * diameter / 4.0;
-        double hydraulicRadius = diameter / 4.0;
-        double qFull = (1.0 / manningsN) * area * Math.Pow(hydraulicRadius, 2.0 / 3.0) * Math.Pow(slope, 0.5);
-        double vFull = qFull / area;
-        double froudeNumber = area > 0 ? vFull / Math.Sqrt(9.81 * hydraulicRadius) : 0;
-
-        double actualFlow = designFlow ?? qFull;
-        double capacityRatio = qFull > 0 ? actualFlow / qFull : 0;
-        double velocity = area > 0 ? actualFlow / area : 0;
+        var qFull = FullFlowCapacity(pipe, manningsN, units);
+        var area = Math.PI * pipe.Diameter * pipe.Diameter / 4.0;
+        var flow = ResolveFlow(pipe, perPipeFlows, designFlow) ?? qFull;
+        var capacityRatio = qFull > 0 ? flow / qFull : 0;
+        var normalDepth = NormalDepth(flow, pipe, manningsN, units);
+        var velocity = capacityRatio > 1.0 ? flow / area : PartialFlowVelocity(flow, normalDepth, pipe.Diameter);
 
         var pipeViolations = new List<string>();
-        if (pipe.Slope < minSlope) pipeViolations.Add($"slope {pipe.Slope:F3}% < min {minSlope}%");
-        if (velocity < minVelocity) pipeViolations.Add($"velocity {velocity:F2} < min {minVelocity} ft/s");
-        if (velocity > maxVelocity) pipeViolations.Add($"velocity {velocity:F2} > max {maxVelocity} ft/s");
-        if (capacityRatio > 1.0) pipeViolations.Add($"flow {actualFlow:F2} exceeds capacity {qFull:F2} CFS");
+        if (pipe.SlopePct < 0) pipeViolations.Add($"adverse slope {pipe.SlopePct:F3}% (end invert above start invert)");
+        else if (pipe.SlopePct < minSlope) pipeViolations.Add($"slope {pipe.SlopePct:F3}% < min {minSlope}%");
+        if (velocity < minVelocity) pipeViolations.Add($"velocity {velocity:F2} < min {minVelocity} {units.Velocity}");
+        if (velocity > maxVelocity) pipeViolations.Add($"velocity {velocity:F2} > max {maxVelocity} {units.Velocity}");
+        if (capacityRatio > 1.0) pipeViolations.Add($"flow {flow:F3} exceeds capacity {qFull:F3} {units.Flow}");
+        if (pipe.MinimumCover < minCoverDepth) pipeViolations.Add($"cover {pipe.MinimumCover:F2} < min {minCoverDepth} {units.Length}");
 
-        var pipeResult = new Dictionary<string, object?>
+        results.Add(new Dictionary<string, object?>
         {
           ["pipeName"] = pipe.Name,
-          ["diameter"] = Math.Round(diameter, 3),
+          ["startStructure"] = pipe.StartStructureName,
+          ["endStructure"] = pipe.EndStructureName,
+          ["diameter"] = Math.Round(pipe.Diameter, 3),
           ["length"] = Math.Round(pipe.Length, 2),
-          ["slopePct"] = Math.Round(pipe.Slope, 4),
+          ["slopePct"] = Math.Round(pipe.SlopePct, 3),
           ["invertIn"] = Math.Round(pipe.InvertIn, 3),
           ["invertOut"] = Math.Round(pipe.InvertOut, 3),
-          ["qFullCfs"] = Math.Round(qFull, 3),
-          ["designFlowCfs"] = Math.Round(actualFlow, 3),
+          ["minimumCover"] = Math.Round(pipe.MinimumCover, 3),
+          ["qFull"] = Math.Round(qFull, 4),
+          ["designFlow"] = Math.Round(flow, 4),
           ["capacityRatio"] = Math.Round(capacityRatio, 3),
-          ["velocityFps"] = Math.Round(velocity, 3),
-          ["froudeNumber"] = Math.Round(froudeNumber, 3),
+          ["normalDepth"] = Math.Round(normalDepth, 3),
+          ["velocity"] = Math.Round(velocity, 3),
           ["status"] = pipeViolations.Count > 0 ? "FAIL" : "OK",
           ["violations"] = pipeViolations,
-        };
+        });
 
-        results.Add(pipeResult);
         if (pipeViolations.Count > 0)
         {
           violations.Add(new Dictionary<string, object?>
@@ -178,7 +203,15 @@ public static class PipeHydraulicsCommands
       return new Dictionary<string, object?>
       {
         ["networkName"] = networkName,
+        ["units"] = units.Describe(),
         ["manningsN"] = manningsN,
+        ["criteria"] = new Dictionary<string, object?>
+        {
+          ["minSlopePct"] = minSlope,
+          ["minVelocity"] = minVelocity,
+          ["maxVelocity"] = maxVelocity,
+          ["minCoverDepth"] = minCoverDepth,
+        },
         ["pipeCount"] = pipes.Count,
         ["passCount"] = results.Count(r => (string)(r["status"] ?? "") == "OK"),
         ["failCount"] = violations.Count,
@@ -201,43 +234,33 @@ public static class PipeHydraulicsCommands
       var network = FindPipeNetworkByName(civilDoc, transaction, networkName);
       var structure = FindStructureByName(network, transaction, structureName);
 
-      var rimElevation = GetAnyDouble(structure, "RimElevation", "SurfaceElevation", "Elevation") ?? 0.0;
-      var sumpDepth = GetAnyDouble(structure, "SumpDepth") ?? 0.0;
-      var sumpElevation = GetAnyDouble(structure, "SumpElevation") ?? (rimElevation - sumpDepth);
-      var depth = rimElevation - sumpElevation;
-
-      // Get connected pipes and their inverts
-      var connectedPipeIds = GetChildObjectIds(structure, "GetConnectedPipeIds", "ConnectedPipeIds", "ConnectedPipes");
       var connectedPipes = new List<Dictionary<string, object?>>();
-      foreach (var pipeId in connectedPipeIds)
+      for (var index = 0; index < structure.ConnectedPipesCount; index++)
       {
-        if (pipeId == ObjectId.Null) continue;
-        var pipe = CivilObjectUtils.GetRequiredObject<DBObject>(transaction, pipeId, OpenMode.ForRead);
-        var invertIn = GetAnyDouble(pipe, "StartInvertElevation", "InvertIn", "StartInnerElevation") ?? 0.0;
-        var invertOut = GetAnyDouble(pipe, "EndInvertElevation", "InvertOut", "EndInnerElevation") ?? 0.0;
+        var pipeId = structure.get_ConnectedPipe(index);
+        if (pipeId.IsNull) continue;
+        var pipe = CivilObjectUtils.GetRequiredObject<Pipe>(transaction, pipeId, OpenMode.ForRead);
         connectedPipes.Add(new Dictionary<string, object?>
         {
-          ["name"] = CivilObjectUtils.GetName(pipe) ?? pipeId.Handle.ToString(),
-          ["invertIn"] = Math.Round(invertIn, 3),
-          ["invertOut"] = Math.Round(invertOut, 3),
-          ["diameter"] = Math.Round(GetAnyDouble(pipe, "InnerDiameterOrWidth", "InnerDiameter", "Diameter") ?? 0.0, 3),
+          ["name"] = pipe.Name,
+          ["flow"] = structure.IsConnectedPipeFlowingIn(index) ? "in" : structure.IsConnectedPipeFlowingOut(index) ? "out" : "unknown",
+          ["invertElevation"] = Math.Round(structure.RimElevation - structure.get_PipeInvertDepth(index), 3),
+          ["diameter"] = Math.Round(pipe.InnerDiameterOrWidth, 3),
         });
       }
-
-      var location = GetPointProperty(structure, "Location", "Position", "CenterPoint");
 
       return new Dictionary<string, object?>
       {
         ["networkName"] = networkName,
-        ["structureName"] = structureName,
-        ["type"] = GetAnyString(structure, "PartType", "StructureType", "PartDescription") ?? structure.GetType().Name,
-        ["x"] = Math.Round(location?.X ?? 0.0, 3),
-        ["y"] = Math.Round(location?.Y ?? 0.0, 3),
-        ["rimElevation"] = Math.Round(rimElevation, 3),
-        ["sumpElevation"] = Math.Round(sumpElevation, 3),
-        ["sumpDepth"] = Math.Round(sumpDepth, 3),
-        ["totalDepth"] = Math.Round(depth, 3),
-        ["barrelCount"] = GetAnyDouble(structure, "BarrelCount", "NumberOfBarrels") ?? 1.0,
+        ["structureName"] = structure.Name,
+        ["type"] = structure.PartType.ToString(),
+        ["partSize"] = structure.PartSizeName,
+        ["x"] = Math.Round(structure.Location.X, 3),
+        ["y"] = Math.Round(structure.Location.Y, 3),
+        ["rimElevation"] = Math.Round(structure.RimElevation, 3),
+        ["sumpElevation"] = Math.Round(structure.SumpElevation, 3),
+        ["sumpDepth"] = Math.Round(structure.SumpDepth, 3),
+        ["totalDepth"] = Math.Round(structure.RimElevation - structure.SumpElevation, 3),
         ["connectedPipes"] = connectedPipes,
       };
     });
@@ -245,170 +268,191 @@ public static class PipeHydraulicsCommands
 
   // ─── Private helpers ─────────────────────────────────────────────────────────
 
-  private sealed record PipeInfo(string Name, double Diameter, double Length, double Slope, double InvertIn, double InvertOut);
+  private sealed record PipeInfo(
+    ObjectId Id,
+    string Name,
+    double Diameter,
+    double Length,
+    double SlopePct,
+    double InvertIn,
+    double InvertOut,
+    double MinimumCover,
+    ObjectId StartStructureId,
+    ObjectId EndStructureId,
+    string? StartStructureName,
+    string? EndStructureName);
+
   private sealed record StructureInfo(string Name, double RimElevation, double SumpElevation, List<string> ConnectedPipes);
 
-  private static DBObject FindPipeNetworkByName(object civilDoc, Transaction transaction, string name)
+  private sealed record HydraulicUnits(
+    bool Metric,
+    double ManningK,
+    double Gravity,
+    string Length,
+    string Flow,
+    string Velocity,
+    double DefaultMinCover,
+    double DefaultMinVelocity,
+    double DefaultMaxVelocity,
+    double DefaultMinSlopePct)
   {
-    var candidates = new[]
-    {
-      CivilObjectUtils.InvokeMethod(civilDoc, "GetPipeNetworkIds"),
-      GetNamedMember(civilDoc, "PipeNetworkCollection"),
-      GetNamedMember(civilDoc, "NetworkCollection"),
-      GetNamedMember(civilDoc, "PipeNetworks"),
-      GetNamedMember(civilDoc, "Networks"),
-    };
+    public static HydraulicUnits For(Database database) => database.Insunits == UnitsValue.Meters
+      ? new HydraulicUnits(true, 1.0, 9.81, "m", "m3/s", "m/s", 1.0, 0.9, 5.0, 0.3)
+      : new HydraulicUnits(false, 1.486, 32.2, "ft", "cfs", "ft/s", 2.0, 2.0, 10.0, 0.5);
 
-    foreach (var candidate in candidates)
+    public Dictionary<string, object?> Describe() => new()
     {
-      foreach (var objectId in ToObjectIds(candidate))
-      {
-        var network = CivilObjectUtils.GetRequiredObject<DBObject>(transaction, objectId, OpenMode.ForRead);
-        if (string.Equals(CivilObjectUtils.GetName(network), name, StringComparison.OrdinalIgnoreCase))
-          return network;
-      }
+      ["system"] = Metric ? "metric" : "imperial",
+      ["length"] = Length,
+      ["flow"] = Flow,
+      ["velocity"] = Velocity,
+    };
+  }
+
+  private static Dictionary<string, double> ReadPerPipeFlows(JsonObject? parameters)
+  {
+    var flows = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+    if (PluginRuntime.GetParameter(parameters, "perPipeDesignFlows") is not JsonArray items)
+      return flows;
+
+    foreach (var item in items.OfType<JsonObject>())
+    {
+      var pipeName = item["pipeName"]?.GetValue<string>();
+      var flow = item["designFlow"]?.GetValue<double>();
+      if (!string.IsNullOrWhiteSpace(pipeName) && flow.HasValue)
+        flows[pipeName!] = flow.Value;
+    }
+    return flows;
+  }
+
+  private static double? ResolveFlow(PipeInfo pipe, Dictionary<string, double> perPipeFlows, double? designFlow)
+  {
+    return perPipeFlows.TryGetValue(pipe.Name, out var flow) ? flow : designFlow;
+  }
+
+  private static double FullFlowCapacity(PipeInfo pipe, double manningsN, HydraulicUnits units)
+  {
+    var area = Math.PI * pipe.Diameter * pipe.Diameter / 4.0;
+    var hydraulicRadius = pipe.Diameter / 4.0;
+    var slope = Math.Abs(pipe.SlopePct) / 100.0;
+    return units.ManningK / manningsN * area * Math.Pow(hydraulicRadius, 2.0 / 3.0) * Math.Sqrt(slope);
+  }
+
+  private static double FullFlowFrictionSlope(double flow, PipeInfo pipe, double manningsN, HydraulicUnits units)
+  {
+    var area = Math.PI * pipe.Diameter * pipe.Diameter / 4.0;
+    var hydraulicRadius = pipe.Diameter / 4.0;
+    var conveyance = units.ManningK / manningsN * area * Math.Pow(hydraulicRadius, 2.0 / 3.0);
+    return conveyance > 0 ? Math.Pow(flow / conveyance, 2) : 0.0;
+  }
+
+  // Circular section, depth y: θ = 2·acos(1 − 2y/D), A = D²/8·(θ − sinθ), P = D·θ/2.
+  private static (double Area, double WettedPerimeter) PartialSection(double depth, double diameter)
+  {
+    var ratio = Math.Clamp(1.0 - 2.0 * depth / diameter, -1.0, 1.0);
+    var theta = 2.0 * Math.Acos(ratio);
+    return (diameter * diameter / 8.0 * (theta - Math.Sin(theta)), diameter * theta / 2.0);
+  }
+
+  private static double NormalDepth(double flow, PipeInfo pipe, double manningsN, HydraulicUnits units)
+  {
+    var slope = Math.Abs(pipe.SlopePct) / 100.0;
+    if (flow <= 0 || slope <= 0) return pipe.Diameter;
+
+    double Capacity(double depth)
+    {
+      var (area, perimeter) = PartialSection(depth, pipe.Diameter);
+      return perimeter > 0 ? units.ManningK / manningsN * area * Math.Pow(area / perimeter, 2.0 / 3.0) * Math.Sqrt(slope) : 0.0;
+    }
+
+    // Partial-flow capacity peaks near 0.94·D, so search below that and treat larger flows as full.
+    var high = 0.938 * pipe.Diameter;
+    if (Capacity(high) < flow) return pipe.Diameter;
+    var low = 0.0;
+    for (var i = 0; i < 60; i++)
+    {
+      var mid = (low + high) / 2.0;
+      if (Capacity(mid) >= flow) high = mid;
+      else low = mid;
+    }
+    return high;
+  }
+
+  private static double PartialFlowVelocity(double flow, double depth, double diameter)
+  {
+    var (area, _) = PartialSection(depth, diameter);
+    return area > 0 ? flow / area : 0.0;
+  }
+
+  private static Network FindPipeNetworkByName(object civilDoc, Transaction transaction, string name)
+  {
+    foreach (ObjectId objectId in ((CivilDocument)civilDoc).GetPipeNetworkIds())
+    {
+      var network = CivilObjectUtils.GetRequiredObject<Network>(transaction, objectId, OpenMode.ForRead);
+      if (string.Equals(network.Name, name, StringComparison.OrdinalIgnoreCase))
+        return network;
     }
 
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Pipe network '{name}' was not found.");
   }
 
-  private static DBObject FindStructureByName(DBObject network, Transaction transaction, string structureName)
+  private static Structure FindStructureByName(Network network, Transaction transaction, string structureName)
   {
-    foreach (var objectId in GetChildObjectIds(network, "GetStructureIds", "StructureIds", "Structures", "StructureCollection"))
+    foreach (ObjectId objectId in network.GetStructureIds())
     {
-      var structure = CivilObjectUtils.GetRequiredObject<DBObject>(transaction, objectId, OpenMode.ForRead);
-      if (string.Equals(CivilObjectUtils.GetName(structure), structureName, StringComparison.OrdinalIgnoreCase))
+      var structure = CivilObjectUtils.GetRequiredObject<Structure>(transaction, objectId, OpenMode.ForRead);
+      if (string.Equals(structure.Name, structureName, StringComparison.OrdinalIgnoreCase))
         return structure;
     }
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Structure '{structureName}' was not found.");
   }
 
-  private static List<PipeInfo> GetPipeData(DBObject network, Transaction transaction)
+  private static List<PipeInfo> GetPipeData(Network network, Transaction transaction)
   {
     var results = new List<PipeInfo>();
-    foreach (var objectId in GetChildObjectIds(network, "GetPipeIds", "PipeIds", "Pipes", "PipeCollection"))
+    foreach (ObjectId objectId in network.GetPipeIds())
     {
-      var pipe = CivilObjectUtils.GetRequiredObject<DBObject>(transaction, objectId, OpenMode.ForRead);
-      var startPt = GetPointProperty(pipe, "StartPoint", "PointAtStart");
-      var endPt = GetPointProperty(pipe, "EndPoint", "PointAtEnd");
-      var invertIn = GetAnyDouble(pipe, "StartInvertElevation", "InvertIn", "StartInnerElevation") ?? startPt?.Z ?? 0.0;
-      var invertOut = GetAnyDouble(pipe, "EndInvertElevation", "InvertOut", "EndInnerElevation") ?? endPt?.Z ?? 0.0;
-      var length = GetAnyDouble(pipe, "Length3D", "Length2D", "Length") ?? 0.0;
-      var slope = GetAnyDouble(pipe, "Slope", "FlowSlope") ?? (length > 0 ? (invertIn - invertOut) / length * 100 : 0);
-      var diameter = GetAnyDouble(pipe, "InnerDiameterOrWidth", "InnerDiameter", "Diameter") ?? 1.0;
-      results.Add(new PipeInfo(CivilObjectUtils.GetName(pipe) ?? objectId.Handle.ToString(), diameter, length, slope, invertIn, invertOut));
+      var pipe = CivilObjectUtils.GetRequiredObject<Pipe>(transaction, objectId, OpenMode.ForRead);
+      var diameter = pipe.InnerDiameterOrWidth;
+      // StartPoint/EndPoint are on the pipe centerline; the managed API exposes no invert property.
+      var invertIn = pipe.StartPoint.Z - diameter / 2.0;
+      var invertOut = pipe.EndPoint.Z - diameter / 2.0;
+      var length = pipe.Length2DCenterToCenter > 0 ? pipe.Length2DCenterToCenter : pipe.Length2D;
+      var slopePct = length > 0 ? (invertIn - invertOut) / length * 100.0 : 0.0;
+      results.Add(new PipeInfo(
+        objectId,
+        pipe.Name,
+        diameter,
+        length,
+        slopePct,
+        invertIn,
+        invertOut,
+        pipe.MinimumCover,
+        pipe.StartStructureId,
+        pipe.EndStructureId,
+        ResolveObjectName(transaction, pipe.StartStructureId),
+        ResolveObjectName(transaction, pipe.EndStructureId)));
     }
     return results;
   }
 
-  private static List<StructureInfo> GetStructureData(DBObject network, Transaction transaction)
+  private static List<StructureInfo> GetStructureData(Network network, Transaction transaction)
   {
     var results = new List<StructureInfo>();
-    foreach (var objectId in GetChildObjectIds(network, "GetStructureIds", "StructureIds", "Structures", "StructureCollection"))
+    foreach (ObjectId objectId in network.GetStructureIds())
     {
-      var structure = CivilObjectUtils.GetRequiredObject<DBObject>(transaction, objectId, OpenMode.ForRead);
-      var rim = GetAnyDouble(structure, "RimElevation", "SurfaceElevation", "Elevation") ?? 0.0;
-      var sumpDepth = GetAnyDouble(structure, "SumpDepth") ?? 0.0;
-      var sump = GetAnyDouble(structure, "SumpElevation") ?? (rim - sumpDepth);
-      var pipeIds = GetChildObjectIds(structure, "GetConnectedPipeIds", "ConnectedPipeIds", "ConnectedPipes")
-        .Select(id => ResolveObjectName(transaction, id) ?? id.Handle.ToString()).ToList();
-      results.Add(new StructureInfo(CivilObjectUtils.GetName(structure) ?? objectId.Handle.ToString(), rim, sump, pipeIds));
+      var structure = CivilObjectUtils.GetRequiredObject<Structure>(transaction, objectId, OpenMode.ForRead);
+      results.Add(new StructureInfo(structure.Name, structure.RimElevation, structure.SumpElevation, structure.GetConnectedPipeNames().ToList()));
     }
     return results;
-  }
-
-  private static IEnumerable<ObjectId> GetChildObjectIds(DBObject parent, params string[] memberNames)
-  {
-    foreach (var name in memberNames)
-    {
-      var value = GetNamedMember(parent, name);
-      if (value != null)
-      {
-        foreach (var id in ToObjectIds(value))
-          yield return id;
-        yield break;
-      }
-    }
-  }
-
-  private static IEnumerable<ObjectId> ToObjectIds(object? value)
-  {
-    if (value == null) yield break;
-
-    if (value is IEnumerable enumerable)
-    {
-      foreach (var item in enumerable)
-      {
-        if (item is ObjectId id && id != ObjectId.Null)
-          yield return id;
-        else
-        {
-          var itemId = GetAnyObjectId(item, "ObjectId", "Id");
-          if (itemId != ObjectId.Null) yield return itemId;
-        }
-      }
-    }
-  }
-
-  private static object? GetNamedMember(object? obj, string name)
-  {
-    if (obj == null) return null;
-    return Civil3DCompatibility.GetPropertyValue(obj, name)
-      ?? Civil3DCompatibility.InvokeMethod(obj, name);
-  }
-
-  private static ObjectId GetAnyObjectId(object? obj, params string[] names)
-  {
-    if (obj == null) return ObjectId.Null;
-    foreach (var name in names)
-    {
-      var val = GetNamedMember(obj, name);
-      if (val is ObjectId id && id != ObjectId.Null) return id;
-    }
-    return ObjectId.Null;
-  }
-
-  private static double? GetAnyDouble(DBObject obj, params string[] names)
-  {
-    foreach (var name in names)
-    {
-      var val = GetNamedMember(obj, name);
-      if (val != null)
-      {
-        try { return Convert.ToDouble(val); }
-        catch { /* try next */ }
-      }
-    }
-    return null;
-  }
-
-  private static string? GetAnyString(DBObject obj, params string[] names)
-  {
-    foreach (var name in names)
-    {
-      var val = GetNamedMember(obj, name);
-      if (val != null) return val.ToString();
-    }
-    return null;
-  }
-
-  private static Point3d? GetPointProperty(DBObject obj, params string[] names)
-  {
-    foreach (var name in names)
-    {
-      var val = GetNamedMember(obj, name);
-      if (val is Point3d pt) return pt;
-    }
-    return null;
   }
 
   private static string? ResolveObjectName(Transaction transaction, ObjectId id)
   {
-    if (id == ObjectId.Null) return null;
+    if (id.IsNull) return null;
     try
     {
-      var obj = transaction.GetObject(id, OpenMode.ForRead, false, true);
-      return CivilObjectUtils.GetName(obj);
+      return CivilObjectUtils.GetName(transaction.GetObject(id, OpenMode.ForRead, false, true));
     }
     catch { return null; }
   }

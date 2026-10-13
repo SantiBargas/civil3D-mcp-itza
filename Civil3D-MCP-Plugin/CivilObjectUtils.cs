@@ -21,6 +21,12 @@ public static class CivilObjectUtils
       return null;
     }
 
+    // StyleBase overrides only set_Name, so reflection finds a getter-less Name on every style.
+    if (value is Autodesk.Civil.DatabaseServices.DBObject civilObject)
+    {
+      return civilObject.Name;
+    }
+
     return Civil3DCompatibility.GetPropertyValue(value, "Name")?.ToString();
   }
 

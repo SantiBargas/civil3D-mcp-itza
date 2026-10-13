@@ -32,6 +32,10 @@ const canonicalPipeInputShape = {
     "add_pipe",
     "add_structure",
     "catalog_list",
+    "add_many",
+    "delete",
+    "delete_pipe",
+    "delete_structure",
     "calculate_hgl",
     "hydraulic_analysis",
     "get_structure_properties",
@@ -105,6 +109,8 @@ const canonicalPipeInputShape = {
   position: OptionalPoint3DSchema.optional(),
   rotation: z.number().optional(),
   onPipeName: z.string().optional(),
+  structures: z.array(z.lazy(() => PipeBatchStructureSchema)).optional(),
+  pipes: z.array(z.lazy(() => PipeBatchPipeSchema)).optional(),
 };
 
 const PipeListArgsSchema = z.object({ action: z.literal("list") });
@@ -135,6 +141,7 @@ const PipeAddPipeArgsSchema = z.object({
   endStructure: z.string().optional(),
   partName: z.string(),
   diameter: z.number().optional(),
+  name: z.string().optional(),
 }).superRefine((value, ctx) => {
   if (!value.startPoint && !value.startStructure) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Either startPoint or startStructure is required.", path: ["startPoint"] });
@@ -151,19 +158,60 @@ const PipeAddStructureArgsSchema = z.object({
   partName: z.string(),
   rimElevation: z.number().optional(),
   sumpDepth: z.number().optional(),
+  name: z.string().optional(),
 });
+const MAX_BATCH_PIPE_PARTS = 200;
+const PipeBatchStructureSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  partName: z.string(),
+  rimElevation: z.number().optional(),
+  sumpDepth: z.number().optional(),
+  name: z.string().optional(),
+});
+const PipeBatchPipeSchema = z.object({
+  partName: z.string(),
+  startPoint: Point3DSchema.optional(),
+  endPoint: Point3DSchema.optional(),
+  startStructure: z.string().optional(),
+  endStructure: z.string().optional(),
+  diameter: z.number().optional(),
+  name: z.string().optional(),
+}).superRefine((value, ctx) => {
+  if (!value.startPoint && !value.startStructure) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Either startPoint or startStructure is required.", path: ["startPoint"] });
+  }
+  if (!value.endPoint && !value.endStructure) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Either endPoint or endStructure is required.", path: ["endPoint"] });
+  }
+});
+const PipeAddManyArgsSchema = z.object({
+  action: z.literal("add_many"),
+  networkName: z.string(),
+  structures: z.array(PipeBatchStructureSchema).max(MAX_BATCH_PIPE_PARTS).optional(),
+  pipes: z.array(PipeBatchPipeSchema).max(MAX_BATCH_PIPE_PARTS).optional(),
+}).superRefine((value, ctx) => {
+  if ((value.structures?.length ?? 0) + (value.pipes?.length ?? 0) === 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Provide at least one structure or pipe.", path: ["structures"] });
+  }
+});
+const PipeDeleteArgsSchema = z.object({ action: z.literal("delete"), name: z.string() });
+const PipeDeletePipeArgsSchema = z.object({ action: z.literal("delete_pipe"), networkName: z.string(), pipeName: z.string() });
+const PipeDeleteStructureArgsSchema = z.object({ action: z.literal("delete_structure"), networkName: z.string(), structureName: z.string() });
 const PipeCatalogListArgsSchema = z.object({ action: z.literal("catalog_list"), partsList: z.string().optional() });
 const PipeCalculateHglArgsSchema = z.object({
   action: z.literal("calculate_hgl"),
   networkName: z.string(),
   tailwaterElevation: z.number().optional(),
   designFlow: z.number().optional(),
+  perPipeDesignFlows: z.array(PipeFlowSchema).optional(),
   manningsN: z.number().positive().optional(),
 });
 const PipeHydraulicAnalysisArgsSchema = z.object({
   action: z.literal("hydraulic_analysis"),
   networkName: z.string(),
   designFlow: z.number().optional(),
+  perPipeDesignFlows: z.array(PipeFlowSchema).optional(),
   manningsN: z.number().positive().optional(),
   minCoverDepth: z.number().nonnegative().optional(),
   minVelocity: z.number().nonnegative().optional(),
@@ -283,14 +331,22 @@ type PipeNetworkDetail = {
 };
 
 type PartsCatalogResponse = {
-  partsLists: Array<{ name: string | null; parts: string[] }>;
+  partsLists: Array<{ name: string | null; parts: string[]; pipeParts?: string[] }>;
 };
 
-function parsePartDiameter(partName: string): number | null {
-  const match = partName.match(/(\d+(?:\.\d+)?)/);
+// Catalog names carry the size with thousands separators and a unit ("1,050 mm Concrete Pipe", "12in RCP");
+// an explicit metric unit is converted to metres, the drawing unit of metric networks.
+export function parsePartDiameter(partName: string): number | null {
+  // Box, elliptical and egg-shaped sections ("1,000 x 500 mm") are not circular; Manning sizing below assumes circles.
+  if (/\d\s*x\s*\d/i.test(partName)) return null;
+  const match = partName.match(/(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(mm|cm|m|in|ft)?\b/i);
   if (!match) return null;
-  const value = Number(match[1]);
-  return Number.isFinite(value) ? value : null;
+  const value = Number(match[1].replace(/,/g, ""));
+  if (!Number.isFinite(value)) return null;
+  const unit = match[2]?.toLowerCase();
+  if (unit === "mm") return value / 1000;
+  if (unit === "cm") return value / 100;
+  return value;
 }
 
 function computeFullFlowCapacity(diameter: number, slopePct: number, manningsN: number): number {
@@ -423,6 +479,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         endStructure: args.endStructure,
         partName: args.partName,
         diameter: args.diameter,
+        name: args.name,
       })),
     },
     add_structure: {
@@ -440,6 +497,57 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         partName: args.partName,
         rimElevation: args.rimElevation,
         sumpDepth: args.sumpDepth,
+        name: args.name,
+      })),
+    },
+    add_many: {
+      action: "add_many",
+      inputSchema: PipeAddManyArgsSchema,
+      responseSchema: GenericPipeResponseSchema,
+      capabilities: ["create", "edit"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["addPartsToNetwork"],
+      execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("addPartsToNetwork", {
+        networkName: args.networkName,
+        structures: args.structures ?? [],
+        pipes: args.pipes ?? [],
+      })),
+    },
+    delete: {
+      action: "delete",
+      inputSchema: PipeDeleteArgsSchema,
+      responseSchema: GenericPipeResponseSchema,
+      capabilities: ["delete"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["deletePipeNetwork"],
+      execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("deletePipeNetwork", { name: args.name })),
+    },
+    delete_pipe: {
+      action: "delete_pipe",
+      inputSchema: PipeDeletePipeArgsSchema,
+      responseSchema: GenericPipeResponseSchema,
+      capabilities: ["delete"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["deletePipeFromNetwork"],
+      execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("deletePipeFromNetwork", {
+        networkName: args.networkName,
+        pipeName: args.pipeName,
+      })),
+    },
+    delete_structure: {
+      action: "delete_structure",
+      inputSchema: PipeDeleteStructureArgsSchema,
+      responseSchema: GenericPipeResponseSchema,
+      capabilities: ["delete"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["deleteStructureFromNetwork"],
+      execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("deleteStructureFromNetwork", {
+        networkName: args.networkName,
+        structureName: args.structureName,
       })),
     },
     catalog_list: {
@@ -464,6 +572,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         networkName: args.networkName,
         tailwaterElevation: args.tailwaterElevation ?? null,
         designFlow: args.designFlow ?? null,
+        perPipeDesignFlows: args.perPipeDesignFlows ?? null,
         manningsN: args.manningsN ?? 0.013,
       })),
     },
@@ -478,11 +587,13 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
       execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("analyzePipeNetworkHydraulics", {
         networkName: args.networkName,
         designFlow: args.designFlow ?? null,
+        perPipeDesignFlows: args.perPipeDesignFlows ?? null,
         manningsN: args.manningsN ?? 0.013,
-        minCoverDepth: args.minCoverDepth ?? 2.0,
-        minVelocity: args.minVelocity ?? 2.0,
-        maxVelocity: args.maxVelocity ?? 10.0,
-        minSlope: args.minSlope ?? 0.5,
+        // Defaults depend on the drawing units, so the plugin resolves them.
+        minCoverDepth: args.minCoverDepth ?? null,
+        minVelocity: args.minVelocity ?? null,
+        maxVelocity: args.maxVelocity ?? null,
+        minSlope: args.minSlope ?? null,
       })),
     },
     get_structure_properties: {
@@ -512,7 +623,9 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         if (!partsListName) throw new Error("No parts list was provided and the pipe network does not expose one.");
 
         const catalog = await appClient.sendCommand("listPipePartsCatalog", { partsList: partsListName }) as PartsCatalogResponse;
-        const parts = catalog.partsLists.find((item) => item.name === partsListName)?.parts ?? [];
+        const partsListEntry = catalog.partsLists.find((item) => item.name === partsListName);
+        // Structure sizes carry numbers too (e.g. "Concentric Structure 1200"); only pipes are candidates.
+        const parts = partsListEntry?.pipeParts ?? partsListEntry?.parts ?? [];
         if (parts.length === 0) throw new Error(`Parts list '${partsListName}' does not contain any pipe parts.`);
 
         const perPipeDesignFlows = (args.perPipeDesignFlows ?? []) as Array<z.infer<typeof PipeFlowSchema>>;
@@ -806,7 +919,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
       inputShape: canonicalPipeInputShape,
       supportedActions: [
         "list", "get", "get_pipe", "get_structure", "check_interference", "create", "add_pipe", "add_structure",
-        "catalog_list", "calculate_hgl", "hydraulic_analysis", "get_structure_properties", "size_network", "automate_profile_view",
+        "add_many", "delete", "delete_pipe", "delete_structure", "catalog_list", "calculate_hgl", "hydraulic_analysis", "get_structure_properties", "size_network", "automate_profile_view",
         "list_pressure_networks", "get_pressure_network", "create_pressure_network", "delete_pressure_network",
         "assign_pressure_parts_list", "set_pressure_cover", "validate_pressure_network", "export_pressure_network",
         "connect_pressure_networks", "add_pressure_pipe", "get_pressure_pipe_properties", "resize_pressure_pipe",

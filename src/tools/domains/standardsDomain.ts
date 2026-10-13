@@ -8,6 +8,17 @@ const LabelPointSchema = z.object({
   y: z.number(),
 });
 
+const LabelStyleComponentEditSchema = z.object({
+  name: z.string().min(1),
+  contents: z.string().optional(),
+  height: z.number().positive().optional(),
+  xOffset: z.number().optional(),
+  yOffset: z.number().optional(),
+  angle: z.number().optional(),
+  maxWidth: z.number().nonnegative().optional(),
+  visible: z.boolean().optional(),
+});
+
 const LabelListObjectTypeSchema = z.enum(["alignment", "profile", "surface", "pipe_network"]);
 const StyleObjectTypeSchema = z.enum([
   "surface",
@@ -33,6 +44,11 @@ const canonicalStandardsInputShape = {
   action: z.enum([
     "label_list",
     "label_add",
+    "label_add_many",
+    "label_delete_many",
+    "label_style_get",
+    "label_style_create",
+    "label_style_edit",
     "label_list_styles",
     "style_list",
     "style_get",
@@ -41,6 +57,25 @@ const canonicalStandardsInputShape = {
     "check_drawing_standards",
     "fix_drawing_standards",
   ]),
+  baseStyle: z.string().optional(),
+  newName: z.string().optional(),
+  components: z.array(LabelStyleComponentEditSchema).optional(),
+  handles: z.array(z.string()).optional(),
+  namePattern: z.string().optional(),
+  // Union of label_add_many kinds and label_style_* kinds; each action validates its own subset.
+  kind: z.enum(["parcel_area", "parcel_segment", "parcel_line", "parcel_curve", "pipe", "structure"]).optional(),
+  siteName: z.string().optional(),
+  networkName: z.string().optional(),
+  names: z.array(z.string()).optional(),
+  curveLabelStyle: z.string().optional(),
+  layer: z.string().optional(),
+  ratio: z.number().optional(),
+  offsetX: z.number().optional(),
+  offsetY: z.number().optional(),
+  minLength: z.number().optional(),
+  skipLabeled: z.boolean().optional(),
+  position: z.number().optional(),
+  positionMinLength: z.number().optional(),
   objectType: z.string().optional(),
   objectName: z.string().optional(),
   labelType: z.string().optional(),
@@ -78,6 +113,57 @@ const LabelAddArgsSchema = z.object({
   labelStyle: z.string().optional(),
   station: z.number().optional(),
   point: LabelPointSchema.optional(),
+});
+
+const LabelAddManyArgsSchema = z.object({
+  action: z.literal("label_add_many"),
+  kind: z.enum(["parcel_area", "parcel_segment", "pipe", "structure"]),
+  siteName: z.string().optional(),
+  networkName: z.string().optional(),
+  names: z.array(z.string()).optional(),
+  namePattern: z.string().optional(),
+  labelStyle: z.string().optional(),
+  curveLabelStyle: z.string().optional(),
+  layer: z.string().optional(),
+  ratio: z.number().min(0).max(1).optional(),
+  offsetX: z.number().optional(),
+  offsetY: z.number().optional(),
+  minLength: z.number().nonnegative().optional(),
+  skipLabeled: z.boolean().optional(),
+  position: z.number().min(0).max(1).optional(),
+  positionMinLength: z.number().nonnegative().optional(),
+}).superRefine((value, ctx) => {
+  const parcelKind = value.kind === "parcel_area" || value.kind === "parcel_segment";
+  if (parcelKind && !value.siteName) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${value.kind} labels need siteName.`, path: ["siteName"] });
+  if (!parcelKind && !value.networkName) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${value.kind} labels need networkName.`, path: ["networkName"] });
+});
+
+const LabelDeleteManyArgsSchema = z.object({
+  action: z.literal("label_delete_many"),
+  handles: z.array(z.string().min(1)).min(1).max(2000),
+});
+
+const LabelStyleKindSchema = z.enum(["parcel_area", "parcel_line", "parcel_curve", "pipe", "structure"]);
+
+const LabelStyleGetArgsSchema = z.object({
+  action: z.literal("label_style_get"),
+  kind: LabelStyleKindSchema,
+  styleName: z.string().min(1),
+});
+
+const LabelStyleCreateArgsSchema = z.object({
+  action: z.literal("label_style_create"),
+  kind: LabelStyleKindSchema,
+  baseStyle: z.string().min(1),
+  newName: z.string().min(1),
+  components: z.array(LabelStyleComponentEditSchema).max(50).optional(),
+});
+
+const LabelStyleEditArgsSchema = z.object({
+  action: z.literal("label_style_edit"),
+  kind: LabelStyleKindSchema,
+  styleName: z.string().min(1),
+  components: z.array(LabelStyleComponentEditSchema).min(1).max(50),
 });
 
 const LabelListStylesArgsSchema = z.object({
@@ -163,6 +249,87 @@ export const STANDARDS_DOMAIN_DEFINITION: DomainToolDefinition = {
           station: args.station,
           point: args.point,
         }),
+      ),
+    },
+    label_add_many: {
+      action: "label_add_many",
+      inputSchema: LabelAddManyArgsSchema,
+      responseSchema: GenericStandardsResponseSchema,
+      capabilities: ["create", "edit"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["addLabels"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("addLabels", {
+          kind: args.kind,
+          siteName: args.siteName,
+          networkName: args.networkName,
+          names: args.names,
+          namePattern: args.namePattern,
+          labelStyle: args.labelStyle,
+          curveLabelStyle: args.curveLabelStyle,
+          layer: args.layer,
+          ratio: args.ratio,
+          offsetX: args.offsetX,
+          offsetY: args.offsetY,
+          minLength: args.minLength,
+          skipLabeled: args.skipLabeled,
+          position: args.position,
+          positionMinLength: args.positionMinLength,
+        }),
+      ),
+    },
+    label_style_get: {
+      action: "label_style_get",
+      inputSchema: LabelStyleGetArgsSchema,
+      responseSchema: GenericStandardsResponseSchema,
+      capabilities: ["query", "inspect"],
+      requiresActiveDrawing: true,
+      safeForRetry: true,
+      pluginMethods: ["getLabelStyle"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("getLabelStyle", { kind: args.kind, styleName: args.styleName }),
+      ),
+    },
+    label_style_create: {
+      action: "label_style_create",
+      inputSchema: LabelStyleCreateArgsSchema,
+      responseSchema: GenericStandardsResponseSchema,
+      capabilities: ["create"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["createLabelStyle"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("createLabelStyle", {
+          kind: args.kind,
+          baseStyle: args.baseStyle,
+          newName: args.newName,
+          components: args.components ?? [],
+        }),
+      ),
+    },
+    label_style_edit: {
+      action: "label_style_edit",
+      inputSchema: LabelStyleEditArgsSchema,
+      responseSchema: GenericStandardsResponseSchema,
+      capabilities: ["edit"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["editLabelStyle"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("editLabelStyle", { kind: args.kind, styleName: args.styleName, components: args.components }),
+      ),
+    },
+    label_delete_many: {
+      action: "label_delete_many",
+      inputSchema: LabelDeleteManyArgsSchema,
+      responseSchema: GenericStandardsResponseSchema,
+      capabilities: ["delete"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["deleteLabels"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("deleteLabels", { handles: args.handles }),
       ),
     },
     label_list_styles: {
@@ -295,6 +462,11 @@ export const STANDARDS_DOMAIN_DEFINITION: DomainToolDefinition = {
       supportedActions: [
         "label_list",
         "label_add",
+        "label_add_many",
+        "label_delete_many",
+        "label_style_get",
+        "label_style_create",
+        "label_style_edit",
         "label_list_styles",
         "style_list",
         "style_get",
@@ -303,7 +475,7 @@ export const STANDARDS_DOMAIN_DEFINITION: DomainToolDefinition = {
         "check_drawing_standards",
         "fix_drawing_standards",
       ],
-      capabilities: ["query", "inspect", "create", "edit", "manage", "analyze"],
+      capabilities: ["query", "inspect", "create", "edit", "delete", "manage", "analyze"],
       requiresActiveDrawing: false,
       safeForRetry: false,
       resolveAction: (rawArgs) => ({ action: String(rawArgs.action ?? ""), args: rawArgs }),

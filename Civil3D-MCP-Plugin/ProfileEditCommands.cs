@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.Civil.DatabaseServices;
+using AcEntity = Autodesk.AutoCAD.DatabaseServices.Entity;
 
 namespace Civil3DMcpPlugin;
 
@@ -222,59 +223,225 @@ public static class ProfileEditCommands
 
   // ─── profileViewCreate ────────────────────────────────────────────────────
 
+  // Gap between the drawing and an automatically placed profile view (drawing units).
+  private const double AutoPlacementMargin = 20.0;
+
   public static Task<object?> ProfileViewCreateAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
     var profileViewName = PluginRuntime.GetRequiredString(parameters, "profileViewName");
-    var insertX = PluginRuntime.GetRequiredDouble(parameters, "insertX");
-    var insertY = PluginRuntime.GetRequiredDouble(parameters, "insertY");
+    var insertX = PluginRuntime.GetOptionalDouble(parameters, "insertX");
+    var insertY = PluginRuntime.GetOptionalDouble(parameters, "insertY");
+    if (insertX.HasValue != insertY.HasValue)
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Pass both insertX and insertY, or neither for automatic placement.");
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
-      var insertionPoint = new Point3d(insertX, insertY, 0);
-
-      var blockTable = CivilObjectUtils.GetRequiredObject<BlockTable>(
-        transaction, database.BlockTableId, OpenMode.ForRead);
-      var modelSpace = CivilObjectUtils.GetRequiredObject<BlockTableRecord>(
-        transaction, blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+      var autoPlace = !insertX.HasValue;
+      // Measured before creating the view so it is not part of the "existing drawing".
+      var drawingExtents = autoPlace ? GetModelSpaceExtents(database, transaction, null) : null;
+      var insertionPoint = autoPlace ? Point3d.Origin : new Point3d(insertX!.Value, insertY!.Value, 0);
 
       var styleId = LookupUtils.GetProfileViewStyleId(
         civilDoc, transaction, PluginRuntime.GetOptionalString(parameters, "style"));
       var bandSetId = LookupUtils.GetProfileViewBandSetId(
         civilDoc, transaction, PluginRuntime.GetOptionalString(parameters, "bandSet"));
 
-      // ProfileView.Create(profileViewName, alignmentId, styleId, insertionPoint)
-      // or ProfileView.Create(profileViewName, alignmentId, insertionPoint, styleId, bandSetId)
-      var profileViewType = typeof(ProfileView);
-      var pvId = (ObjectId?)(
-        CivilObjectUtils.InvokeStaticMethod(profileViewType, "Create",
-          profileViewName, alignment.ObjectId, insertionPoint, styleId, bandSetId)
-        ?? CivilObjectUtils.InvokeStaticMethod(profileViewType, "Create",
-          profileViewName, alignment.ObjectId, styleId, insertionPoint)
-        ?? CivilObjectUtils.InvokeStaticMethod(profileViewType, "Create",
-          profileViewName, alignment.ObjectId, insertionPoint));
+      // Civil 3D 2026 signatures (verified in AeccDbMgd metadata): Create(alignmentId, insertPosition)
+      // and Create(alignmentId, insertPosition, name, bandSetId, styleId). The old reflection probes
+      // used argument orders that do not exist, so view_create always failed.
+      ObjectId pvId;
+      if (!styleId.IsNull && !bandSetId.IsNull)
+      {
+        pvId = ProfileView.Create(alignment.ObjectId, insertionPoint, profileViewName, bandSetId, styleId);
+      }
+      else
+      {
+        pvId = ProfileView.Create(alignment.ObjectId, insertionPoint);
+        var created = CivilObjectUtils.GetRequiredObject<ProfileView>(transaction, pvId, OpenMode.ForWrite);
+        created.Name = profileViewName;
+        if (!styleId.IsNull)
+          created.StyleId = styleId;
+      }
 
-      if (pvId == null || pvId.Value.IsNull)
+      if (pvId.IsNull)
       {
         throw new JsonRpcDispatchException(
           "CIVIL3D.TRANSACTION_FAILED",
-          "ProfileView.Create returned null — this Civil 3D version may require a different API signature.");
+          "ProfileView.Create returned a null id.");
       }
 
-      var profileView = CivilObjectUtils.GetRequiredObject<ProfileView>(
-        transaction, pvId.Value, OpenMode.ForRead);
+      var profileView = CivilObjectUtils.GetRequiredObject<ProfileView>(transaction, pvId, OpenMode.ForWrite);
+      if (autoPlace)
+        MoveViewTo(profileView, AutoPlacementTarget(drawingExtents), database, transaction);
 
-      return new Dictionary<string, object?>
-      {
-        ["profileViewName"] = profileView.Name,
-        ["handle"] = CivilObjectUtils.GetHandle(profileView),
-        ["alignmentName"] = alignment.Name,
-        ["insertX"] = insertX,
-        ["insertY"] = insertY,
-        ["success"] = true,
-      };
+      var result = DescribePlacement(profileView, database, transaction);
+      result["profileViewName"] = profileView.Name;
+      result["handle"] = CivilObjectUtils.GetHandle(profileView);
+      result["alignmentName"] = alignment.Name;
+      result["placement"] = autoPlace ? "auto" : "manual";
+      result["success"] = true;
+      return result;
     });
+  }
+
+  // ─── profileViewMove ──────────────────────────────────────────────────────
+
+  public static Task<object?> ProfileViewMoveAsync(JsonObject? parameters)
+  {
+    var profileViewName = PluginRuntime.GetRequiredString(parameters, "profileViewName");
+    var insertX = PluginRuntime.GetOptionalDouble(parameters, "insertX");
+    var insertY = PluginRuntime.GetOptionalDouble(parameters, "insertY");
+    if (insertX.HasValue != insertY.HasValue)
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Pass both insertX and insertY, or neither for automatic placement.");
+
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var found = FindProfileViewByName(civilDoc, transaction, profileViewName);
+      var profileView = CivilObjectUtils.GetRequiredObject<ProfileView>(transaction, found.ObjectId, OpenMode.ForWrite);
+      var autoPlace = !insertX.HasValue;
+      // insertX/insertY are the lower-left corner of the whole view (grid + bands + labels).
+      var target = autoPlace
+        ? AutoPlacementTarget(GetModelSpaceExtents(database, transaction, profileView))
+        : new Point3d(insertX!.Value, insertY!.Value, 0);
+      MoveViewTo(profileView, target, database, transaction);
+
+      var result = DescribePlacement(profileView, database, transaction);
+      result["profileViewName"] = profileView.Name;
+      result["placement"] = autoPlace ? "auto" : "manual";
+      result["moved"] = true;
+      return result;
+    });
+  }
+
+  private static Extents3d? GetModelSpaceExtents(Database database, Transaction transaction, ProfileView? exclude)
+  {
+    Extents3d? total = null;
+    foreach (var (_, extents) in EnumerateModelSpaceExtents(database, transaction, exclude))
+    {
+      if (total.HasValue)
+      {
+        var merged = total.Value;
+        merged.AddExtents(extents);
+        total = merged;
+      }
+      else
+      {
+        total = extents;
+      }
+    }
+    return total;
+  }
+
+  // Excludes the given view and what belongs to it: its band label groups (separate entities that
+  // span the view's width) and Profile entities, which are drawn inside profile views.
+  private static IEnumerable<(AcEntity Entity, Extents3d Extents)> EnumerateModelSpaceExtents(
+    Database database, Transaction transaction, ProfileView? exclude)
+  {
+    var blockTable = CivilObjectUtils.GetRequiredObject<BlockTable>(transaction, database.BlockTableId, OpenMode.ForRead);
+    var modelSpace = CivilObjectUtils.GetRequiredObject<BlockTableRecord>(
+      transaction, blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+    foreach (ObjectId id in modelSpace)
+    {
+      if (exclude != null && id == exclude.ObjectId) continue;
+      if (transaction.GetObject(id, OpenMode.ForRead) is not AcEntity entity) continue;
+      if (exclude != null && entity is Profile) continue;
+      if (exclude != null && IsBandOf(entity, exclude.ObjectId)) continue;
+      if (!TryGetReliableExtents(entity, out var extents)) continue;
+      yield return (entity, extents);
+    }
+  }
+
+  // A Site has no geometry of its own and an empty label group (e.g. a superelevation band with no
+  // data) has nothing drawn; both report placeholder extents at (0; 0) that threw the placement off.
+  private static bool TryGetReliableExtents(AcEntity entity, out Extents3d extents)
+  {
+    extents = default;
+    if (entity is Site || entity is LabelGroup { SubEntityCount: 0 })
+    {
+      PluginLog.Info("ProfileView", $"ignored extents of {entity.GetType().Name} {entity.Handle} (no geometry)");
+      return false;
+    }
+    try
+    {
+      extents = entity.GeometricExtents;
+      return true;
+    }
+    catch (Autodesk.AutoCAD.Runtime.Exception)
+    {
+      return false; // entities without geometry (empty surfaces, etc.)
+    }
+  }
+
+  private static string FormatExtents(Extents3d extents) =>
+    $"({extents.MinPoint.X:F3}; {extents.MinPoint.Y:F3})-({extents.MaxPoint.X:F3}; {extents.MaxPoint.Y:F3})";
+
+  private static Point3d AutoPlacementTarget(Extents3d? drawingExtents)
+  {
+    PluginLog.Info("ProfileView",
+      $"auto placement: drawing extents={(drawingExtents.HasValue ? FormatExtents(drawingExtents.Value) : "none")}");
+    return drawingExtents.HasValue
+      ? new Point3d(drawingExtents.Value.MaxPoint.X + AutoPlacementMargin, drawingExtents.Value.MinPoint.Y, 0)
+      : Point3d.Origin;
+  }
+
+  // Bands with a title block stick out of the grid, so matching by width missed them.
+  private static bool IsBandOf(AcEntity entity, ObjectId viewId) =>
+    entity is ProfileBandLabelGroup band && band.ViewId == viewId;
+
+  // Grid + bands: GeometricExtents of a ProfileView covers only the grid.
+  private static Extents3d GetViewTotalExtents(ProfileView view, Database database, Transaction transaction)
+  {
+    var viewExtents = view.GeometricExtents;
+    var total = viewExtents;
+    var blockTable = CivilObjectUtils.GetRequiredObject<BlockTable>(transaction, database.BlockTableId, OpenMode.ForRead);
+    var modelSpace = CivilObjectUtils.GetRequiredObject<BlockTableRecord>(
+      transaction, blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+    foreach (ObjectId id in modelSpace)
+    {
+      if (transaction.GetObject(id, OpenMode.ForRead) is not AcEntity entity) continue;
+      if (!IsBandOf(entity, view.ObjectId)) continue;
+      if (!TryGetReliableExtents(entity, out var extents)) continue;
+      PluginLog.Info("ProfileView",
+        $"[{view.Name}] band {entity.GetType().Name} {entity.Handle} {FormatExtents(extents)} subEntities={((LabelGroup)entity).SubEntityCount}");
+      total.AddExtents(extents);
+    }
+    return total;
+  }
+
+  // TransformBy is a no-op on profile views; they move through Graph.Location (bands follow).
+  private static void MoveViewTo(ProfileView view, Point3d target, Database database, Transaction transaction)
+  {
+    var total = GetViewTotalExtents(view, database, transaction);
+    var totalMin = total.MinPoint;
+    var location = view.Location;
+    PluginLog.Info("ProfileView",
+      $"[{view.Name}] grid={FormatExtents(view.GeometricExtents)} total={FormatExtents(total)} location={location} target={target}");
+    view.Location = new Point3d(location.X + target.X - totalMin.X, location.Y + target.Y - totalMin.Y, location.Z);
+  }
+
+  private static Dictionary<string, object?> DescribePlacement(ProfileView view, Database database, Transaction transaction)
+  {
+    var extents = GetViewTotalExtents(view, database, transaction);
+    var overlapping = EnumerateModelSpaceExtents(database, transaction, view)
+      .Where(item => item.Extents.MinPoint.X < extents.MaxPoint.X && item.Extents.MaxPoint.X > extents.MinPoint.X
+        && item.Extents.MinPoint.Y < extents.MaxPoint.Y && item.Extents.MaxPoint.Y > extents.MinPoint.Y)
+      .Select(item => item.Entity.GetType().Name)
+      .ToList();
+    return new Dictionary<string, object?>
+    {
+      ["extents"] = new Dictionary<string, object?>
+      {
+        ["minX"] = Math.Round(extents.MinPoint.X, 3),
+        ["minY"] = Math.Round(extents.MinPoint.Y, 3),
+        ["maxX"] = Math.Round(extents.MaxPoint.X, 3),
+        ["maxY"] = Math.Round(extents.MaxPoint.Y, 3),
+      },
+      ["overlapsExisting"] = overlapping.Count > 0,
+      ["overlappingCount"] = overlapping.Count,
+      ["overlappingTypes"] = overlapping.Distinct().Take(10).ToList(),
+    };
   }
 
   // ─── profileViewBandSet ───────────────────────────────────────────────────

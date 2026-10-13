@@ -306,6 +306,14 @@ public static class LabelCommands
 
   private static IEnumerable<ObjectId> GetLabelStyleCollection(object civilDoc, string objectType)
   {
+    // Typed collections first: the reflected names below never matched pipes/structures and
+    // returned an empty list.
+    var typed = LabelBatchCommands.GetTypedLabelStyles((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc, objectType);
+    if (typed != null)
+    {
+      return typed.Cast<ObjectId>().Where(objectId => objectId != ObjectId.Null).ToList();
+    }
+
     var styles = GetNamedMemberValue(civilDoc, "Styles") ?? throw new JsonRpcDispatchException("CIVIL3D.TRANSACTION_FAILED", "Civil 3D styles collection is not available.");
     var labelSetStyles = GetNamedMemberValue(styles, "LabelSetStyles");
 

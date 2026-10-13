@@ -11,6 +11,7 @@ const AssemblySummarySchema = z.object({
   handle: z.string(),
   subassemblyCount: z.number(),
   usedByCorridors: z.array(z.string()),
+  layers: z.array(z.string()).optional(),
 });
 
 const AssemblyListResponseSchema = z.object({
@@ -22,18 +23,24 @@ const SubassemblySchema = z.object({
   side: z.enum(["left", "right", "none"]),
   className: z.string(),
   parameters: z.record(AssemblyParameterValueSchema),
+  points: z.array(z.object({
+    index: z.number(),
+    offset: z.number(),
+    elevation: z.number(),
+    codes: z.array(z.string()),
+  })).optional(),
 });
 
 const AssemblyDetailResponseSchema = z.object({
   name: z.string(),
   handle: z.string(),
-  style: z.string(),
+  style: z.string().nullable(),
   subassemblies: z.array(SubassemblySchema),
   usedByCorridors: z.array(z.string()),
 });
 
 const canonicalAssemblyInputShape = {
-  action: z.enum(["list", "get", "create", "create_subassembly", "edit"]),
+  action: z.enum(["list", "get", "create", "create_subassembly", "edit", "delete"]),
   name: z.string().optional(),
   insertionPoint: z.object({
     x: z.number(),
@@ -46,6 +53,8 @@ const canonicalAssemblyInputShape = {
   side: z.enum(["Left", "Right", "Both"]).optional(),
   parameters: z.record(AssemblyParameterValueSchema).optional(),
   subassemblyName: z.string().optional(),
+  attachTo: z.string().optional(),
+  attachPointIndex: z.number().int().nonnegative().optional(),
   delete: z.boolean().optional(),
 };
 
@@ -75,6 +84,16 @@ const AssemblyCreateSubassemblyArgsSchema = z.object({
   subassemblyType: z.string(),
   side: z.enum(["Left", "Right", "Both"]),
   parameters: z.record(AssemblyParameterValueSchema).optional(),
+  // With side "Both" each subassembly gets a "-Left"/"-Right" suffix.
+  name: z.string().optional(),
+  // Without attachTo the subassembly hooks to the assembly baseline point.
+  attachTo: z.string().optional(),
+  attachPointIndex: z.number().int().nonnegative().optional(),
+});
+
+const AssemblyDeleteArgsSchema = z.object({
+  action: z.literal("delete"),
+  name: z.string(),
 });
 
 const AssemblyEditArgsSchema = z.object({
@@ -147,6 +166,9 @@ export const ASSEMBLY_DOMAIN_DEFINITION: DomainToolDefinition = {
           subassemblyType: args.subassemblyType,
           side: args.side,
           parameters: args.parameters ?? {},
+          name: args.name ?? null,
+          attachTo: args.attachTo ?? null,
+          attachPointIndex: args.attachPointIndex ?? null,
         }),
       ),
     },
@@ -167,14 +189,28 @@ export const ASSEMBLY_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    delete: {
+      action: "delete",
+      inputSchema: AssemblyDeleteArgsSchema,
+      responseSchema: GenericAssemblyResponseSchema,
+      capabilities: ["delete"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["deleteAssembly"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("deleteAssembly", {
+          name: args.name,
+        }),
+      ),
+    },
   },
   exposures: [
     {
       toolName: "civil3d_assembly",
       displayName: "Civil 3D Assembly",
-      description: "Lists, inspects, creates, and edits Civil 3D assemblies and subassemblies through a single domain tool.",
+      description: "Lists, inspects, creates, edits, and deletes Civil 3D assemblies and subassemblies through a single domain tool.",
       inputShape: canonicalAssemblyInputShape,
-      supportedActions: ["list", "get", "create", "create_subassembly", "edit"],
+      supportedActions: ["list", "get", "create", "create_subassembly", "edit", "delete"],
       resolveAction: (rawArgs) => ({
         action: String(rawArgs.action ?? ""),
         args: rawArgs,
@@ -214,6 +250,9 @@ export const ASSEMBLY_DOMAIN_DEFINITION: DomainToolDefinition = {
         subassemblyType: z.string(),
         side: z.enum(["Left", "Right", "Both"]),
         parameters: z.record(AssemblyParameterValueSchema).optional(),
+        name: z.string().optional(),
+        attachTo: z.string().optional(),
+        attachPointIndex: z.number().int().nonnegative().optional(),
       },
       supportedActions: ["create_subassembly"],
       resolveAction: (rawArgs) => ({
@@ -224,6 +263,9 @@ export const ASSEMBLY_DOMAIN_DEFINITION: DomainToolDefinition = {
           subassemblyType: rawArgs.subassemblyType,
           side: rawArgs.side,
           parameters: rawArgs.parameters,
+          name: rawArgs.name,
+          attachTo: rawArgs.attachTo,
+          attachPointIndex: rawArgs.attachPointIndex,
         },
       }),
     },

@@ -202,11 +202,26 @@ const ProfileViewCreateArgsSchema = z.object({
   action: z.literal("view_create"),
   alignmentName: z.string(),
   profileViewName: z.string(),
-  insertX: z.number(),
-  insertY: z.number(),
+  // Omit both to place the view to the right of everything already drawn.
+  insertX: z.number().optional(),
+  insertY: z.number().optional(),
   style: z.string().optional(),
   bandSet: z.string().optional(),
-});
+}).refine(
+  (args) => (args.insertX === undefined) === (args.insertY === undefined),
+  { message: "Pass both insertX and insertY, or neither for automatic placement." },
+);
+
+const ProfileViewMoveArgsSchema = z.object({
+  action: z.literal("view_move"),
+  profileViewName: z.string(),
+  // Lower-left corner of the whole view; omit both for automatic placement.
+  insertX: z.number().optional(),
+  insertY: z.number().optional(),
+}).refine(
+  (args) => (args.insertX === undefined) === (args.insertY === undefined),
+  { message: "Pass both insertX and insertY, or neither for automatic placement." },
+);
 
 const ProfileViewBandSetArgsSchema = z.object({
   action: z.literal("view_band_set"),
@@ -232,6 +247,7 @@ const canonicalProfileInputShape = {
     "set_grade",
     "check_k_values",
     "view_create",
+    "view_move",
     "view_band_set",
   ]),
   alignmentName: z.string().optional(),
@@ -559,10 +575,26 @@ export const PROFILE_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("profileViewCreate", {
           alignmentName: args.alignmentName,
           profileViewName: args.profileViewName,
-          insertX: args.insertX,
-          insertY: args.insertY,
+          insertX: args.insertX ?? null,
+          insertY: args.insertY ?? null,
           style: args.style,
           bandSet: args.bandSet,
+        }),
+      ),
+    },
+    view_move: {
+      action: "view_move",
+      inputSchema: ProfileViewMoveArgsSchema,
+      responseSchema: GenericProfileResponseSchema,
+      capabilities: ["edit"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["profileViewMove"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("profileViewMove", {
+          profileViewName: args.profileViewName,
+          insertX: args.insertX ?? null,
+          insertY: args.insertY ?? null,
         }),
       ),
     },
@@ -603,6 +635,7 @@ export const PROFILE_DOMAIN_DEFINITION: DomainToolDefinition = {
         "set_grade",
         "check_k_values",
         "view_create",
+        "view_move",
         "view_band_set",
       ],
       resolveAction: (rawArgs) => ({
@@ -771,8 +804,8 @@ export const PROFILE_DOMAIN_DEFINITION: DomainToolDefinition = {
       inputShape: {
         alignmentName: z.string(),
         profileViewName: z.string(),
-        insertX: z.number(),
-        insertY: z.number(),
+        insertX: z.number().optional(),
+        insertY: z.number().optional(),
         style: z.string().optional(),
         bandSet: z.string().optional(),
       },

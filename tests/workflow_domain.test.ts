@@ -472,6 +472,7 @@ describe("workflow domain execution", () => {
     expect(sendCommandMock).toHaveBeenCalledWith("analyzePipeNetworkHydraulics", {
       networkName: "STM-1",
       designFlow: 4,
+      perPipeDesignFlows: null,
       manningsN: 0.013,
       minCoverDepth: 2,
       minVelocity: 2,

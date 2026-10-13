@@ -530,6 +530,7 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
             action: "hydraulic_analysis",
             networkName: args.networkName,
             designFlow: args.designFlow ?? args.defaultDesignFlow,
+            perPipeDesignFlows: args.perPipeDesignFlows,
             manningsN: args.manningsN,
             minCoverDepth: args.minCoverDepth,
             minVelocity: args.minVelocity,

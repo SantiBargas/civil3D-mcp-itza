@@ -38,7 +38,7 @@ no tener dos fuentes de verdad desincronizadas.
 
 ## Decisión de estrategia (ITZA, 2026-09-21)
 
-ITZA no va a pagar HMK. Se mantiene este fork (a renombrar **sacred-g-itza**) y se le agrega funcionalidad de a poco, priorizada
+ITZA no va a pagar HMK. Se mantiene este fork (**sacred-g-itza**, renombrado el 10-07) y se le agrega funcionalidad de a poco, priorizada
 por casos de uso reales de ITZA (mensura/plano reglamentario, estilos de etiqueta) — no se intenta
 replicar HMK entero de una. No se cuenta con que la comunidad del proyecto original (Sacred-G)
 contribuya activamente — se trata como que lo mantiene ITZA, cualquier aporte externo es bonus.
@@ -92,10 +92,36 @@ fuente de verdad del estado de fixes y bugs abiertos — no duplicarlo acá.
   `C:\Program Files\Autodesk\AutoCAD 2026\C3D\Autodesk.AECC.Interop.*.dll` (ej. `...Land.dll`:
   parcelas, loops, segmentos). En PowerShell 5.1 no se puede (falta `System.Reflection.Metadata`):
   usar un proyecto de consola chico con `dotnet run` en una carpeta temporal.
+- **Contexto de ejecución:** `ReadAsync`/`WriteAsync` corren por `Application.Idle`, no por
+  `ExecuteInCommandContextAsync` (los armados diferidos de Civil 3D dejaban el contexto de comando
+  abierto y colgaban todo — ver `CAMBIOS_ITZA.md` 10-13). En ese contexto `Corridor.Rebuild()` no
+  arma las TIN de las superficies del corredor: usar `RebuildCorridorAndSurfaces`. Comandos de línea
+  (`SendStringToExecute`) → `CivilExecution.RunCommandAsync`, que espera a que terminen. Si una tool
+  se cuelga: `dotnet-stack report -p <pid de acad>` muestra si hay código del plugin en ejecución.
+- **Subensamblajes:** `subassemblyType` = clase .NET completa (`Subassembly.BasicLane`) y parámetros
+  por `Key`; ambos están en los `.atc` de `C:\ProgramData\Autodesk\C3D 2026\esp\Tool Catalogs\Road
+  Catalog`. Para encadenar, leer los puntos con `civil3d_assembly get` y pasar `attachPointIndex`.
 - **Al cerrar Civil 3D para recompilar casi siempre queda un `acad.exe` vivo sin ventana** (bloquea
-  la copia a `bin\`): chequear con `Get-Process acad` y **pedir permiso** antes de matarlo.
-- **Probar fixes en un dibujo nuevo sin guardar** (`civil3d_drawing new` con la plantilla métrica) y
-  no sobre los dibujos de la prueba del loteo; el token de aprobación es de un solo uso.
+  la copia a `bin\`): chequear con `Get-Process acad`. Si **no tiene ventana** (`MainWindowTitle`
+  vacío), matarlo sin preguntar (permiso permanente de Santi, 10-13); si tiene ventana, es Civil 3D
+  abierto de verdad → preguntar.
+- **Ciclo completo de recompilación** (cada cambio en C# lo necesita; Civil 3D lo abre Santi):
+  (1) pedirle a Santi que guarde y cierre Civil 3D → (2) matar el `acad.exe` huérfano si quedó →
+  (3) `dotnet build ... -c Release` → (4) si cambió `src/`: `npm run build` → (5) Santi abre el
+  dibujo, `NETLOAD`, y si cambió `src/` también `/mcp` → Reconnect. Para no perder vueltas:
+  compilar antes a una carpeta temporal (`-o <scratch>`) con Civil 3D abierto para detectar errores
+  de C#, y juntar varios cambios por compilación.
+- **Probar fixes sin tocar los dibujos de la prueba:** `civil3d_drawing new` con la plantilla
+  métrica, o `civil3d_drawing save` con `saveAs` a una copia `…-pruebas.dwg` (el dibujo activo pasa
+  a ser la copia; borrarla al terminar).
+- **Aprobaciones en la práctica:** el token es de un solo uso y queda atado a la huella del dibujo →
+  si entre el pedido y la llamada se modificó el dibujo (otra acción), falla con "The active drawing
+  changed after approval": pedir un token nuevo justo antes de cada llamada.
+- **Trampas de tools ya conocidas (10-13):** `drawing undo` no deshace operaciones del plugin; en
+  `create_subassembly` pasar siempre `attachPointIndex` para cordones (leer los puntos con
+  `assembly get`); `region_add` sin `targetSurface` deja la región nueva sin TN en los taludes;
+  modificar un ensamblaje ya usado y hacer `rebuild` no siempre actualiza el corredor → borrar y
+  recrear el corredor con `corridor create`. Lista completa en Pendientes de `CAMBIOS_ITZA.md`.
 - **HMK CAD Pilot es comercial:** se documenta su comportamiento y se reimplementa; nunca copiar ni
   descompilar sus DLLs.
 
@@ -116,10 +142,13 @@ ClickUp `90171542241`, lista **"ITZA App"** (dentro del space "ITZA Dev"):
 
 - **Qué hacer en la próxima sesión:** "Qué hacer ahora" de la tarea ITZA360 en
   `C:\Users\santi\Desktop\app-itza2026\docs\tareas.md` (y el último punto de la sección 7 del doc
-  principal). A 10-08: etapas 1 y 2 del loteo hechas; sigue la **etapa 3** (obra lineal de la
-  Calle 3 → corredor → volúmenes) — el traspaso completo (datos, regla de la prueba, qué no leer
-  antes de proponer, procedimiento) está en `tareas.md` bajo «Traspaso para la etapa 3». Datos en
-  `app-itza2026\docs\itza360-agentica\archivos\loteo\`, resultados etapa por etapa en la sección 9
-  del doc principal (columna sacred-g-itza vs. HMK). Hueco esperado: crear un corredor desde cero.
+  principal). A 10-13: **etapas 1–6 del loteo hechas** (3 = obra lineal de la Calle 3; 4 = red
+  pluvial con `civil3d_pipe`; 5 = alumbrado y arbolado con bloques; 6 = entregables: etiquetas con
+  estilos propios + 4 láminas A3 + PDF). Lo que sigue: pulir los pendientes abiertos de la etapa 6
+  (al final de `CAMBIOS_ITZA.md`) y el caso real de Joaco. **Tras cada reapertura de Civil 3D,
+  `civil3d_drawing info` antes de la primera escritura** (el 10-13 se abrió por error el dwg de HMK), y
+  **guardar después de cada paso** (Civil 3D se cerró solo 2 veces en la etapa 6). Datos en
+  `app-itza2026\docs\itza360-agentica\archivos\loteo\` (dibujos en `mcpitza-loteo\` y `hmk-loteo\`),
+  resultados etapa por etapa en la sección 9 del doc principal (columna sacred-g-itza vs. HMK).
 - **Pendientes técnicos del fork:** al final de [`CAMBIOS_ITZA.md`](CAMBIOS_ITZA.md).
 - Se mantiene actualizado allá, no acá, para no duplicar.

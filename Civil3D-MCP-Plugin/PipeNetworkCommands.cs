@@ -157,7 +157,10 @@ public static class PipeNetworkCommands
       var network = FindPipeNetworkByName(civilDoc, transaction, networkName, OpenMode.ForWrite);
       var location = new Point3d(x, y, rimElevation);
       var createdStructureId = AddStructureToNetwork(network, transaction, location, partName, rimElevation, sumpDepth);
-      var structure = CivilObjectUtils.GetRequiredObject<Structure>(transaction, createdStructureId, OpenMode.ForRead);
+      var structure = CivilObjectUtils.GetRequiredObject<Structure>(transaction, createdStructureId, OpenMode.ForWrite);
+      var structureName = PluginRuntime.GetOptionalString(parameters, "name");
+      if (!string.IsNullOrWhiteSpace(structureName))
+        structure.Name = structureName!;
 
       return new Dictionary<string, object?>
       {
@@ -189,7 +192,10 @@ public static class PipeNetworkCommands
       var startPoint = ReadPoint(parameters, "startPoint");
       var endPoint = ReadPoint(parameters, "endPoint");
       var createdPipeId = AddPipeToNetwork(network, transaction, partName, diameter, startPoint, endPoint, startStructureId, endStructureId);
-      var pipe = CivilObjectUtils.GetRequiredObject<Pipe>(transaction, createdPipeId, OpenMode.ForRead);
+      var pipe = CivilObjectUtils.GetRequiredObject<Pipe>(transaction, createdPipeId, OpenMode.ForWrite);
+      var pipeName = PluginRuntime.GetOptionalString(parameters, "name");
+      if (!string.IsNullOrWhiteSpace(pipeName))
+        pipe.Name = pipeName!;
 
       return new Dictionary<string, object?>
       {
@@ -239,6 +245,197 @@ public static class PipeNetworkCommands
     });
   }
 
+  // Batch add: every structure, then every pipe, in one transaction, so a failing item leaves nothing behind.
+  // Pipes may reference structures created earlier in the same batch or already in the network.
+  public static Task<object?> AddPartsToNetworkAsync(JsonObject? parameters)
+  {
+    var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
+    var structureItems = (PluginRuntime.GetParameter(parameters, "structures") as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
+    var pipeItems = (PluginRuntime.GetParameter(parameters, "pipes") as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
+    if (structureItems.Count == 0 && pipeItems.Count == 0)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Provide at least one item in 'structures' or 'pipes'.");
+    }
+
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var network = FindPipeNetworkByName(civilDoc, transaction, networkName, OpenMode.ForWrite);
+      var createdStructures = new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
+      var structureResults = new List<Dictionary<string, object?>>();
+      var pipeResults = new List<Dictionary<string, object?>>();
+
+      for (var index = 0; index < structureItems.Count; index++)
+      {
+        var item = structureItems[index];
+        try
+        {
+          var x = PluginRuntime.GetRequiredDouble(item, "x");
+          var y = PluginRuntime.GetRequiredDouble(item, "y");
+          var partName = PluginRuntime.GetRequiredString(item, "partName");
+          var rimElevation = PluginRuntime.GetOptionalDouble(item, "rimElevation") ?? 0.0;
+          var sumpDepth = PluginRuntime.GetOptionalDouble(item, "sumpDepth") ?? 0.0;
+          var structureId = AddStructureToNetwork(network, transaction, new Point3d(x, y, rimElevation), partName, rimElevation, sumpDepth);
+          var structure = CivilObjectUtils.GetRequiredObject<Structure>(transaction, structureId, OpenMode.ForWrite);
+          var name = PluginRuntime.GetOptionalString(item, "name");
+          if (!string.IsNullOrWhiteSpace(name))
+            structure.Name = name!;
+          createdStructures[structure.Name] = structureId;
+          structureResults.Add(ToStructureData(structure, transaction));
+        }
+        catch (Exception exception) when (exception is not JsonRpcDispatchException)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"structures[{index}] failed: {exception.Message}. Nothing was added.");
+        }
+        catch (JsonRpcDispatchException exception)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"structures[{index}] failed: {exception.Message} Nothing was added.");
+        }
+      }
+
+      ObjectId ResolveStructureId(string? name)
+      {
+        if (string.IsNullOrWhiteSpace(name))
+          return ObjectId.Null;
+        return createdStructures.TryGetValue(name!, out var id)
+          ? id
+          : FindStructureByName(network, transaction, name!, OpenMode.ForRead).ObjectId;
+      }
+
+      for (var index = 0; index < pipeItems.Count; index++)
+      {
+        var item = pipeItems[index];
+        try
+        {
+          var partName = PluginRuntime.GetRequiredString(item, "partName");
+          var startStructureId = ResolveStructureId(PluginRuntime.GetOptionalString(item, "startStructure"));
+          var endStructureId = ResolveStructureId(PluginRuntime.GetOptionalString(item, "endStructure"));
+          var pipeId = AddPipeToNetwork(
+            network,
+            transaction,
+            partName,
+            PluginRuntime.GetOptionalDouble(item, "diameter"),
+            ReadPoint(item, "startPoint"),
+            ReadPoint(item, "endPoint"),
+            startStructureId,
+            endStructureId);
+          var pipe = CivilObjectUtils.GetRequiredObject<Pipe>(transaction, pipeId, OpenMode.ForWrite);
+          var name = PluginRuntime.GetOptionalString(item, "name");
+          if (!string.IsNullOrWhiteSpace(name))
+            pipe.Name = name!;
+          pipeResults.Add(ToPipeData(pipe, transaction));
+        }
+        catch (Exception exception) when (exception is not JsonRpcDispatchException)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"pipes[{index}] failed: {exception.Message}. Nothing was added.");
+        }
+        catch (JsonRpcDispatchException exception)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"pipes[{index}] failed: {exception.Message} Nothing was added.");
+        }
+      }
+
+      return new Dictionary<string, object?>
+      {
+        ["networkName"] = CivilObjectUtils.GetName(network) ?? networkName,
+        ["addedStructures"] = structureResults.Count,
+        ["addedPipes"] = pipeResults.Count,
+        ["structures"] = structureResults,
+        ["pipes"] = pipeResults,
+      };
+    });
+  }
+
+  // The API has no Network.Remove*: parts are erased as AutoCAD objects. Pipes are disconnected first so
+  // structures do not keep dangling connections.
+  public static Task<object?> DeletePipeNetworkAsync(JsonObject? parameters)
+  {
+    var name = PluginRuntime.GetRequiredString(parameters, "name");
+
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var network = FindPipeNetworkByName(civilDoc, transaction, name, OpenMode.ForWrite);
+      var pipeCount = 0;
+      foreach (ObjectId pipeId in network.GetPipeIds())
+      {
+        ErasePipe(CivilObjectUtils.GetRequiredObject<Pipe>(transaction, pipeId, OpenMode.ForWrite));
+        pipeCount++;
+      }
+
+      var structureCount = 0;
+      foreach (ObjectId structureId in network.GetStructureIds())
+      {
+        CivilObjectUtils.GetRequiredObject<Structure>(transaction, structureId, OpenMode.ForWrite).Erase();
+        structureCount++;
+      }
+
+      network.Erase();
+      return new Dictionary<string, object?>
+      {
+        ["name"] = name,
+        ["deletedPipes"] = pipeCount,
+        ["deletedStructures"] = structureCount,
+        ["deleted"] = true,
+      };
+    });
+  }
+
+  public static Task<object?> DeletePipeFromNetworkAsync(JsonObject? parameters)
+  {
+    var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
+    var pipeName = PluginRuntime.GetRequiredString(parameters, "pipeName");
+
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var network = FindPipeNetworkByName(civilDoc, transaction, networkName, OpenMode.ForRead);
+      var pipe = FindPipeByName(network, transaction, pipeName, OpenMode.ForWrite);
+      var startStructure = ResolveObjectName(transaction, pipe.StartStructureId);
+      var endStructure = ResolveObjectName(transaction, pipe.EndStructureId);
+      ErasePipe(pipe);
+      return new Dictionary<string, object?>
+      {
+        ["networkName"] = networkName,
+        ["pipeName"] = pipeName,
+        ["disconnectedFrom"] = new[] { startStructure, endStructure }.Where(s => s != null).ToList(),
+        ["deleted"] = true,
+      };
+    });
+  }
+
+  public static Task<object?> DeleteStructureFromNetworkAsync(JsonObject? parameters)
+  {
+    var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
+    var structureName = PluginRuntime.GetRequiredString(parameters, "structureName");
+
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var network = FindPipeNetworkByName(civilDoc, transaction, networkName, OpenMode.ForRead);
+      var structure = FindStructureByName(network, transaction, structureName, OpenMode.ForWrite);
+      if (structure.ConnectedPipesCount > 0)
+      {
+        throw new JsonRpcDispatchException(
+          "CIVIL3D.INVALID_INPUT",
+          $"Structure '{structureName}' still has connected pipes ({string.Join(", ", structure.GetConnectedPipeNames())}); delete them first.");
+      }
+
+      structure.Erase();
+      return new Dictionary<string, object?>
+      {
+        ["networkName"] = networkName,
+        ["structureName"] = structureName,
+        ["deleted"] = true,
+      };
+    });
+  }
+
+  private static void ErasePipe(Pipe pipe)
+  {
+    if (!pipe.StartStructureId.IsNull)
+      pipe.Disconnect(ConnectorPositionType.Start);
+    if (!pipe.EndStructureId.IsNull)
+      pipe.Disconnect(ConnectorPositionType.End);
+    pipe.Erase();
+  }
+
   public static Task<object?> ListPipePartsCatalogAsync(JsonObject? parameters)
   {
     var partsListName = PluginRuntime.GetOptionalString(parameters, "partsList");
@@ -247,11 +444,18 @@ public static class PipeNetworkCommands
     {
       var partsLists = EnumeratePartsLists(civilDoc, transaction)
         .Where(partsList => string.IsNullOrWhiteSpace(partsListName) || string.Equals(CivilObjectUtils.GetName(partsList), partsListName, StringComparison.OrdinalIgnoreCase))
-        .Select(partsList => new Dictionary<string, object?>
+        .Select(partsList =>
         {
-          ["name"] = CivilObjectUtils.GetName(partsList),
-        ["handle"] = partsList is AcDbObject dbObject ? CivilObjectUtils.GetHandle(dbObject) : null,
-          ["parts"] = EnumeratePartNames(partsList).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name).ToList(),
+          var pipeParts = EnumeratePartSizeNames(partsList, transaction, DomainType.Pipe).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name).ToList();
+          var structureParts = EnumeratePartSizeNames(partsList, transaction, DomainType.Structure).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name).ToList();
+          return new Dictionary<string, object?>
+          {
+            ["name"] = CivilObjectUtils.GetName(partsList),
+            ["handle"] = CivilObjectUtils.GetHandle(partsList),
+            ["parts"] = pipeParts.Concat(structureParts).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name).ToList(),
+            ["pipeParts"] = pipeParts,
+            ["structureParts"] = structureParts,
+          };
         })
         .ToList();
 
@@ -459,7 +663,9 @@ public static class PipeNetworkCommands
     network.AddStructure(part.FamilyId, part.SizeId, location, 0.0, ref createdId, applyRules: false);
     var structure = CivilObjectUtils.GetRequiredObject<Structure>(transaction, createdId, OpenMode.ForWrite);
     structure.RimElevation = rimElevation;
-    structure.RimToSumpHeight = sumpDepth;
+    // Only junction structures (manholes) have a sump; headwalls/outlets reject RimToSumpHeight.
+    if (structure.PartType == PartType.StructJunction)
+      structure.RimToSumpHeight = sumpDepth;
     return createdId;
   }
 
@@ -647,70 +853,38 @@ public static class PipeNetworkCommands
   {
     foreach (var partsList in EnumeratePartsLists(civilDoc, transaction))
     {
-      if (string.Equals(CivilObjectUtils.GetName(partsList), partsListName, StringComparison.OrdinalIgnoreCase) && partsList is AcDbObject dbObject)
+      if (string.Equals(CivilObjectUtils.GetName(partsList), partsListName, StringComparison.OrdinalIgnoreCase))
       {
-        return dbObject.ObjectId;
+        return partsList.ObjectId;
       }
     }
 
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Parts list '{partsListName}' was not found.");
   }
 
-  private static IEnumerable<object> EnumeratePartsLists(object civilDoc, Transaction transaction)
+  private static IEnumerable<PartsList> EnumeratePartsLists(object civilDoc, Transaction transaction)
   {
-    var styles = GetNamedMemberValue(civilDoc, "Styles");
-    if (styles == null)
+    foreach (ObjectId objectId in ((CivilDocument)civilDoc).Styles.PartsListSet)
     {
-      yield break;
-    }
-
-    foreach (var collectionName in new[] { "PartsListSet", "PartsLists", "PartsListCollection", "PartsListStyles" })
-    {
-      var collection = GetNamedMemberValue(styles, collectionName) ?? GetNamedMemberValue(civilDoc, collectionName);
-      foreach (var objectId in ToObjectIdsFlexible(collection))
+      if (!objectId.IsNull)
       {
-        yield return transaction.GetObject(objectId, OpenMode.ForRead)!;
+        yield return CivilObjectUtils.GetRequiredObject<PartsList>(transaction, objectId, OpenMode.ForRead);
       }
     }
   }
 
-  private static IEnumerable<string> EnumeratePartNames(object partsList)
+  private static IEnumerable<string> EnumeratePartSizeNames(PartsList partsList, Transaction transaction, DomainType domain)
   {
-    foreach (var collectionName in new[] { "PartFamilies", "PipeFamilies", "StructureFamilies", "PartFamilySet" })
+    foreach (ObjectId familyId in partsList.GetPartFamilyIdsByDomain(domain))
     {
-      var collection = GetNamedMemberValue(partsList, collectionName);
-      foreach (var item in EnumerateNamedObjects(collection))
+      var family = CivilObjectUtils.GetRequiredObject<PartFamily>(transaction, familyId, OpenMode.ForRead);
+      for (var index = 0; index < family.PartSizeCount; index++)
       {
-        var familyName = CivilObjectUtils.GetName(item);
-        if (!string.IsNullOrWhiteSpace(familyName))
+        var sizeName = CivilObjectUtils.GetName(transaction.GetObject(family[index], OpenMode.ForRead));
+        if (!string.IsNullOrWhiteSpace(sizeName))
         {
-          yield return familyName!;
+          yield return sizeName!;
         }
-
-        foreach (var child in EnumerateNamedObjects(GetNamedMemberValue(item, "PartSizeFilter") ?? GetNamedMemberValue(item, "PartSizes") ?? GetNamedMemberValue(item, "SizeDataRecords")))
-        {
-          var childName = CivilObjectUtils.GetName(child) ?? CivilObjectUtils.GetStringProperty(child, "Description");
-          if (!string.IsNullOrWhiteSpace(childName))
-          {
-            yield return childName!;
-          }
-        }
-      }
-    }
-  }
-
-  private static IEnumerable<object> EnumerateNamedObjects(object? collection)
-  {
-    if (collection is IEnumerable enumerable)
-    {
-      foreach (var item in enumerable)
-      {
-        if (item == null)
-        {
-          continue;
-        }
-
-        yield return item;
       }
     }
   }

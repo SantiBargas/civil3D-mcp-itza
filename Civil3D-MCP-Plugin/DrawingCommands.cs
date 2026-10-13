@@ -150,32 +150,28 @@ public static class DrawingCommands
     });
   }
 
-  public static Task<object?> UndoDrawingAsync(JsonObject? parameters)
+  public static async Task<object?> UndoDrawingAsync(JsonObject? parameters)
   {
     var steps = PluginRuntime.GetOptionalInt(parameters, "steps") ?? 1;
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    var completed = await CivilExecution.RunCommandAsync("UNDO", $"_.UNDO {steps} ", TimeSpan.FromSeconds(60));
+    return new Dictionary<string, object?>
     {
-      doc.SendStringToExecute($"_.UNDO {steps} ", true, false, false);
-      return new Dictionary<string, object?>
-      {
-        ["steps"] = steps,
-        ["action"] = "undo",
-      };
-    });
+      ["steps"] = steps,
+      ["action"] = "undo",
+      ["completed"] = completed,
+    };
   }
 
-  public static Task<object?> RedoDrawingAsync(JsonObject? parameters)
+  public static async Task<object?> RedoDrawingAsync(JsonObject? parameters)
   {
     var steps = PluginRuntime.GetOptionalInt(parameters, "steps") ?? 1;
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    var completed = await CivilExecution.RunCommandAsync("REDO", $"_.REDO {steps} ", TimeSpan.FromSeconds(60));
+    return new Dictionary<string, object?>
     {
-      doc.SendStringToExecute($"_.REDO {steps} ", true, false, false);
-      return new Dictionary<string, object?>
-      {
-        ["steps"] = steps,
-        ["action"] = "redo",
-      };
-    });
+      ["steps"] = steps,
+      ["action"] = "redo",
+      ["completed"] = completed,
+    };
   }
 
   public static Task<object?> ListCivilObjectTypesAsync()
