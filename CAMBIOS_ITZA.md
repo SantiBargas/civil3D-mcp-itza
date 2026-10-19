@@ -25,9 +25,21 @@ Formato: una sección por día (MM-DD), lo más nuevo arriba. Cada cambio dice *
   + `npm run package:claude` y deja `dist\kit\civil3D-mcp-itza-kit-<versión>.zip` con
   `CivilMcpItza.bundle\` + `civil3d-mcp-itza-<versión>.mcpb`.
 - **`packaging/claude-desktop/manifest.json`**: `display_name` → «Civil 3D MCP (ITZA)».
-- **Estado:** archivos escritos; **sin correr todavía** `npm run kit`, sin probar el `.mcpb` del fork
-  en Claude Desktop ni la autocarga del bundle (a confirmar: que `Platform="Civil3D"` sea aceptado y si
-  SECURELOAD pide confirmación al cargar desde `%APPDATA%`).
+- `package-lock.json` regenerado con `npm install`: estaba desincronizado (`@emnapi/*`) y el `npm ci` del
+  empaquetado del `.mcpb` fallaba.
+- **Estado:** `npm run kit` OK (zip de 5,6 MB: `.mcpb` + bundle con solo la DLL del plugin). ✅ **Probado en
+  vivo** (máquina de Santi): bundle copiado a `%APPDATA%\Autodesk\ApplicationPlugins`, Civil 3D abierto con
+  el acceso directo «Civil 3D 2026 - Español Métrico» → **SECURELOAD pregunta** («Archivo ejecutable no
+  firmado» → «Cargar siempre»); después el plugin se carga solo (`plugin.log`, puerto 8080, `drawing info`
+  OK en metros). El servidor extraído del `.mcpb` arranca, lista 34 tools y `civil3d_health` da
+  `connected: true`. ✅ **`.mcpb` instalado en Claude Desktop** (Santi, 10-19): no pide Node.js (Claude
+  Desktop trae uno integrado); la ventana «Configurar» deja «Guardar» gris hasta cambiar algo (se cambió
+  el puerto HTTP a `3001`, que además evita chocar con el MCP de Claude Code en el 3000); después hubo que
+  **prender el interruptor** de la extensión. Pregunta en chat nuevo → respondió `Dibujo1.dwg`, métrico,
+  vacío. Guía para usuarios: `app-itza2026/docs/itza360-agentica/informe/GuiaInstalacion.pdf`.
+- Ojo en la máquina de desarrollo: con el bundle instalado, **no** hacer además `NETLOAD` de la DLL de
+  `bin\` (las dos pelean por el puerto 8080). Sacar el bundle de `ApplicationPlugins` para volver al flujo
+  con `NETLOAD`.
 
 ---
 
@@ -693,6 +705,11 @@ exterior), idéntica a HMK. En el camino aparecieron:
 ---
 
 ## Pendientes
+
+- **Distribución de actualizaciones (10-19):** hoy cada versión = `npm run kit` + volver a mandar el zip
+  a mano (kit 1.2.1 mandado a Joaquín el 10-19). Buscar un canal más cómodo (ideas en el punto 20 de la
+  sección 7 de `app-itza2026/docs/itza360-agentica/investigacion-mcp-civil3d.md`). Al publicar una
+  versión nueva: subir `version` en `package.json` (el bundle y el `.mcpb` la toman de ahí).
 
 - Prueba del loteo: **etapas 1–6 hechas** (10-13; dibujos en
   `app-itza2026/docs/itza360-agentica/archivos/loteo/mcpitza-loteo/`). Abiertos de la etapa 6: bandas
