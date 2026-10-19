@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage
+  SchemaVersion="1.0"
+  AutodeskProduct="AutoCAD"
+  ProductType="Application"
+  Name="Civil 3D MCP ITZA"
+  AppVersion="__VERSION__"
+  Description="Plugin de civil3D-mcp-itza: conecta Claude con el dibujo abierto de Civil 3D 2026."
+  Author="ITZA Ingenieria"
+  ProductCode="{EE82209C-6DEC-4361-A156-3E90F82F5EE1}"
+  UpgradeCode="{1403F1A4-799C-4641-9F75-EA4141D47256}">
+  <CompanyDetails Name="ITZA Ingenieria" />
+  <Components Description="Civil 3D 2026">
+    <RuntimeRequirements OS="Win64" Platform="Civil3D" SeriesMin="R25.1" SeriesMax="R25.1" />
+    <ComponentEntry
+      AppName="Civil3DMcpPlugin"
+      ModuleName="./Contents/Civil3DMcpPlugin.dll"
+      AppDescription="Servidor JSON-RPC en localhost:8080 para el MCP de Civil 3D."
+      LoadOnAutoCADStartup="True" />
+  </Components>
+</ApplicationPackage>

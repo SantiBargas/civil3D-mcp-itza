@@ -2,11 +2,50 @@
 
 Registro de todo lo que ITZA cambia respecto del upstream
 ([Sacred-G/Civil3D-mcp](https://github.com/Sacred-G/Civil3D-mcp), base: commit `9e437a3`).
-Este fork es **sacred-g-itza** (repo privado
-[SantiBargas/sacred-g-itza](https://github.com/SantiBargas/sacred-g-itza)).
+Este fork es **civil3D-mcp-itza** (repo privado
+[SantiBargas/civil3D-mcp-itza](https://github.com/SantiBargas/civil3D-mcp-itza)); se llamó **sacred-g-itza** del 10-07 al 10-13
+y las entradas de esas fechas conservan el nombre de entonces.
 
 Formato: una sección por día (MM-DD), lo más nuevo arriba. Cada cambio dice **qué**, **por qué** y
 **estado de verificación** (compila / tests / probado en vivo en Civil 3D).
+
+---
+
+## 10-19 (2026) — kit de instalación (doble clic, sin compilar)
+
+- **Por qué:** para que Joaquín (y otros de ITZA sin perfil de programador) instalen el MCP sin Git,
+  .NET SDK, `C_References`, terminal ni acceso al repo (que sigue privado).
+- **`packaging/civil3d-bundle/PackageContents.xml`** (nuevo): manifiesto de bundle de Autodesk
+  (`Platform="Civil3D"`, `R25.1` = 2026, `LoadOnAutoCADStartup`). Copiado a
+  `%APPDATA%\Autodesk\ApplicationPlugins\CivilMcpItza.bundle\`, Civil 3D carga el plugin solo al abrir
+  (sin `NETLOAD`).
+- **`scripts/build-kit.ps1` + `npm run kit`** (nuevo): compila el plugin directo a una carpeta temporal
+  (`-o`, así no choca con el lock de `bin\` y Civil 3D puede quedar abierto), arma el bundle (frena si
+  aparece alguna DLL que no sea la del plugin: las de Autodesk no se redistribuyen), corre `npm run build`
+  + `npm run package:claude` y deja `dist\kit\civil3D-mcp-itza-kit-<versión>.zip` con
+  `CivilMcpItza.bundle\` + `civil3d-mcp-itza-<versión>.mcpb`.
+- **`packaging/claude-desktop/manifest.json`**: `display_name` → «Civil 3D MCP (ITZA)».
+- **Estado:** archivos escritos; **sin correr todavía** `npm run kit`, sin probar el `.mcpb` del fork
+  en Claude Desktop ni la autocarga del bundle (a confirmar: que `Platform="Civil3D"` sea aceptado y si
+  SECURELOAD pide confirmación al cargar desde `%APPDATA%`).
+
+---
+
+## 10-13 (2026) — renombre a civil3D-mcp-itza
+
+- Repo de GitHub renombrado por Santi: `SantiBargas/sacred-g-itza` → `SantiBargas/civil3D-mcp-itza`
+  (GitHub redirige la URL vieja).
+- `package.json` / `package-lock.json`: `name` y `bin` → `civil3d-mcp-itza` (npm no admite mayúsculas);
+  `repository`/`bugs`/`homepage` → `SantiBargas/civil3D-mcp-itza`. `scripts/inspect-package.mjs` valida el
+  `bin` nuevo (pasa). El servidor MCP sigue llamándose `civil3d-mcp` → las tools no cambian de nombre.
+- ✅ **Hecho por Santi con la sesión de Claude Code cerrada** (el MCP corre desde la carpeta y la
+  bloquea): carpeta local `Documents\GitHub\sacred-g-itza` → `Documents\GitHub\civil3D-mcp-itza`,
+  `git remote set-url origin https://github.com/SantiBargas/civil3D-mcp-itza.git` y MCP re-registrado
+  (scope user) con `...\civil3D-mcp-itza\scripts\claude-bootstrap-and-run.ps1`. **Verificado** en la
+  sesión siguiente: la carpeta vieja no existe, `origin` apunta a la URL nueva y `claude mcp get
+  civil3d-mcp` da «Connected» con la ruta nueva. `NETLOAD` desde ahora:
+  `C:\Users\santi\Documents\GitHub\civil3D-mcp-itza\Civil3D-MCP-Plugin\bin\Release\net8.0-windows\Civil3DMcpPlugin.dll`.
+  Los `obj\` con la ruta vieja se regeneran en la próxima compilación.
 
 ---
 

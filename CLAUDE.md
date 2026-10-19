@@ -38,15 +38,15 @@ no tener dos fuentes de verdad desincronizadas.
 
 ## Decisión de estrategia (ITZA, 2026-09-21)
 
-ITZA no va a pagar HMK. Se mantiene este fork (**sacred-g-itza**, renombrado el 10-07) y se le agrega funcionalidad de a poco, priorizada
+ITZA no va a pagar HMK. Se mantiene este fork (**civil3D-mcp-itza**; se llamó «sacred-g-itza» del 10-07 al 10-13) y se le agrega funcionalidad de a poco, priorizada
 por casos de uso reales de ITZA (mensura/plano reglamentario, estilos de etiqueta) — no se intenta
 replicar HMK entero de una. No se cuenta con que la comunidad del proyecto original (Sacred-G)
 contribuya activamente — se trata como que lo mantiene ITZA, cualquier aporte externo es bonus.
 
 ## Instalación real ya hecha en esta máquina (referencia rápida)
 
-- Clonado en `C:\Users\santi\Documents\GitHub\sacred-g-itza` (esta carpeta; se llamaba
-  `Civil3D-mcp` hasta el 10-07). Remotes: `origin` = [SantiBargas/sacred-g-itza](https://github.com/SantiBargas/sacred-g-itza)
+- Clonado en `C:\Users\santi\Documents\GitHub\civil3D-mcp-itza` (esta carpeta; se llamaba
+  `Civil3D-mcp` hasta el 10-07 y `sacred-g-itza` hasta el 10-13). Remotes: `origin` = [SantiBargas/civil3D-mcp-itza](https://github.com/SantiBargas/civil3D-mcp-itza)
   (privado), `upstream` = Sacred-G (para traer novedades del original).
 - `npm install && npm run build` — sin errores.
 - Plugin compilado con `dotnet build .\Civil3D-MCP-Plugin\Civil3DMcpPlugin.csproj -c Release`,
@@ -75,7 +75,7 @@ fuente de verdad del estado de fixes y bugs abiertos — no duplicarlo acá.
   **Civil 3D tiene que estar cerrado** — si no, compila pero falla la copia a `bin\` por lock
   (`acad.exe` a veces queda vivo sin ventana: revisar el Administrador de tareas).
 - **Cargar:** en Civil 3D, `NETLOAD` con la **ruta absoluta**
-  `C:\Users\santi\Documents\GitHub\sacred-g-itza\Civil3D-MCP-Plugin\bin\Release\net8.0-windows\Civil3DMcpPlugin.dll`
+  `C:\Users\santi\Documents\GitHub\civil3D-mcp-itza\Civil3D-MCP-Plugin\bin\Release\net8.0-windows\Civil3DMcpPlugin.dll`
   (cada sesión de Civil 3D).
 - **Servidor TS:** `npm run build`; tests `npx vitest run`. Después de cambiar `src/`, reconectar
   el MCP en Claude Code (`/mcp` → civil3d-mcp → Reconnect) para que tome el schema nuevo.
@@ -149,6 +149,6 @@ ClickUp `90171542241`, lista **"ITZA App"** (dentro del space "ITZA Dev"):
   `civil3d_drawing info` antes de la primera escritura** (el 10-13 se abrió por error el dwg de HMK), y
   **guardar después de cada paso** (Civil 3D se cerró solo 2 veces en la etapa 6). Datos en
   `app-itza2026\docs\itza360-agentica\archivos\loteo\` (dibujos en `mcpitza-loteo\` y `hmk-loteo\`),
-  resultados etapa por etapa en la sección 9 del doc principal (columna sacred-g-itza vs. HMK).
+  resultados etapa por etapa en la sección 9 del doc principal (columna sacred-g-itza = este fork, vs. HMK).
 - **Pendientes técnicos del fork:** al final de [`CAMBIOS_ITZA.md`](CAMBIOS_ITZA.md).
 - Se mantiene actualizado allá, no acá, para no duplicar.
