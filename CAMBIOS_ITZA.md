@@ -11,6 +11,35 @@ Formato: una sección por día (MM-DD), lo más nuevo arriba. Cada cambio dice *
 
 ---
 
+## 10-26 (2026) — multiversión Civil 3D 2026 + 2027 (EN CURSO, sin código todavía)
+
+- **Por qué:** Joaquín avisó que en ITZA usan **Civil 3D 2027**. El kit 1.2.1 (10-19) solo sirve para
+  2026 (DLL compilada contra 2026 y bundle con `SeriesMin/Max="R25.1"`): en 2027 el bundle se ignora.
+  Objetivo: **un solo kit que funcione en 2026 y 2027**.
+- **Datos de 2027** (fuentes: blog.autodesk.io «AutoCAD 2027 SDK: what every plugin developer needs to
+  know» y aps.autodesk.com «AutoCAD 2027 engine released»; sin verificar en la metadata todavía):
+  serie **R26.0**, **.NET 10** → el plugin tiene que compilarse para `net10.0-windows` contra las DLL de
+  2027 (2025/2026 son .NET 8). Autodesk avisa que cambiaron algunas clases/métodos → puede haber que
+  adaptar código; se ve recién al compilar. Aparte, Autodesk actualiza 2025/2026 a .NET 10 en el lugar
+  (fin de soporte de .NET 8: 10-11-2026); el plugin .NET 8 se cargó bien en el 2026 de Santi el 10-19.
+- **Plan:**
+  1. Santi instala Civil 3D 2027 en su PC (10-26, en descarga) → sacar las 6 DLL de referencia de
+     `C:\Program Files\Autodesk\AutoCAD 2027\` (raíz, `ACA\`, `C3D\`; mismos nombres que para 2026) a
+     `C_References\2027\` (fuera de git). Verificar en la metadata los métodos que usa el plugin.
+  2. Instalar el **.NET 10 SDK** (hoy solo está el 8.0.425).
+  3. Compilar el plugin dos veces: `net8.0-windows` + `C_References` (2026) y `net10.0-windows` +
+     `C_References\2027` (el `.csproj` ya acepta `/p:Civil3DReferencesPath=`; falta el target net10).
+  4. Bundle con `Contents\2026\` y `Contents\2027\`; `PackageContents.xml` con un bloque `Components`
+     por versión (`R25.1` → 2026, `R26.0` → 2027). `build-kit.ps1` arma todo. El `.mcpb` es el mismo
+     para las dos versiones (no depende de Civil 3D).
+  5. Probar en vivo en los dos Civil 3D de Santi; recién ahí mandarle a Joaquín el kit nuevo y actualizar
+     la guía (hoy dice «Civil 3D 2026»).
+- **Ojo:** con 2026 y 2027 instalados en la misma PC, no abrir los dos a la vez con el plugin cargado
+  (los dos querrían el puerto 8080).
+- **Estado:** solo plan documentado; sin código ni compilación.
+
+---
+
 ## 10-19 (2026) — kit de instalación (doble clic, sin compilar)
 
 - **Por qué:** para que Joaquín (y otros de ITZA sin perfil de programador) instalen el MCP sin Git,
@@ -705,6 +734,16 @@ exterior), idéntica a HMK. En el camino aparecieron:
 ---
 
 ## Pendientes
+
+- **Caso inverso: terminar dibujos existentes (Fabián, reunión 10-28):** en vez de que el MCP cree el
+  dibujo de cero, darle un dibujo ya hecho por el equipo y que haga las terminaciones, sobre todo las
+  etiquetas («la forma de renegar con Civil que existe»). Quiere aplicarlo en proyectos reales en una
+  reunión a principios de la semana del 11-02 (fuente:
+  `Documents\GitHub\itza-web\docs\fuentes\reuniones\10-28\transcripcion.md`, [42:40]–[44:28]).
+  Antes de esa reunión: revisar si las tools de etiquetado de la etapa 6 funcionan sobre objetos que
+  no creó el MCP, con estilos y plantilla propios de ITZA (**sin verificar**). Los abiertos de la etapa 6
+  (mover etiqueta existente, «estado arrastrado», bandas del perfil en inglés con punto decimal) pasan a
+  ser prioritarios.
 
 - **Distribución de actualizaciones (10-19):** hoy cada versión = `npm run kit` + volver a mandar el zip
   a mano (kit 1.2.1 mandado a Joaquín el 10-19). Buscar un canal más cómodo (ideas en el punto 20 de la
