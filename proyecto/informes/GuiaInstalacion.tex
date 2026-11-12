@@ -1,0 +1,198 @@
+% !TeX program = lualatex
+\documentclass[12pt, a4paper]{article}
+
+% Paquetes de idioma
+\usepackage[spanish,es-tabla,es-nosectiondot]{babel}
+\usepackage{enumitem}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{xltabular}
+\usepackage{colortbl}
+\usepackage{upquote}
+\usepackage{fancyvrb}
+\usepackage{graphicx}
+
+% ------------------------------------------------------------
+%  Tipografía: LuxSans (UNL), igual que InformesPFC/Informe_Final.
+%  Compilar con LuaLaTeX. Los .ttf viven en ./fonts/
+% ------------------------------------------------------------
+\usepackage{fontspec}
+\defaultfontfeatures{Ligatures=TeX}
+% LuxSans es un subconjunto de Lato: los glifos que no trae se toman de Lato
+\directlua{
+  luaotfload.add_fallback("luxfallback", {
+    "file:Lato-Regular.ttf:mode=node;script=latn;",
+  })
+}
+\defaultfontfeatures+{RawFeature={fallback=luxfallback}}
+\setmainfont{LuxSans}[
+  Path             = fonts/,
+  Extension        = .ttf,
+  UprightFont      = *-Regular,
+  BoldFont         = *-Bold,
+  ItalicFont       = *-Regular,
+  ItalicFeatures   = {FakeSlant=0.2},
+  BoldItalicFont   = *-Bold,
+  BoldItalicFeatures = {FakeSlant=0.2},
+  FontFace         = {l}{n}{Font = *-Light},
+  FontFace         = {k}{n}{Font = *-Black},
+]
+\setsansfont{LuxSans}[
+  Path             = fonts/,
+  Extension        = .ttf,
+  UprightFont      = *-Regular,
+  BoldFont         = *-Bold,
+  ItalicFont       = *-Regular,
+  ItalicFeatures   = {FakeSlant=0.2},
+  BoldItalicFont   = *-Bold,
+  BoldItalicFeatures = {FakeSlant=0.2},
+]
+\usepackage{setspace}
+\setlength{\emergencystretch}{2em}
+\usepackage{titlesec}
+
+% Márgenes
+\usepackage[a4paper,top=3cm,bottom=3cm,left=3cm,right=3cm]{geometry}
+
+\usepackage[colorlinks=true, linkcolor=black, citecolor=blue, urlcolor=blue]{hyperref}
+
+% Colores
+\usepackage[table]{xcolor}
+\definecolor{azulFICH}{RGB}{0, 99, 175}
+\definecolor{grisClaro}{RGB}{230, 230, 230}
+\definecolor{fondoNota}{RGB}{242, 246, 250}
+% Mayúsculas con letras espaciadas, como en la portada del informe
+\newcommand{\espaciadas}[2][18]{{\addfontfeatures{LetterSpace=#1}\MakeUppercase{#2}}}
+
+% Legibilidad
+\setstretch{1.1}
+\setlength{\parskip}{6pt}
+\setlist{topsep=2pt, itemsep=6pt, parsep=0pt, partopsep=0pt}
+\setlength{\parindent}{1em}
+\titlespacing{\section}{0pt}{16pt}{0pt}
+\titlespacing{\subsection}{0pt}{12pt}{0pt}
+
+% Recuadro para notas
+\newcommand{\nota}[1]{%
+  \par\noindent\colorbox{fondoNota}{\parbox{\dimexpr\linewidth-2\fboxsep\relax}{\setlength{\parindent}{0pt}#1}}\par}
+
+% Captura de pantalla centrada con borde fino
+\newcommand{\captura}[2]{\par\smallskip{\centering\setlength{\fboxsep}{0pt}\fbox{\includegraphics[width=#2\linewidth]{imagenes/guia/#1}}\par}\smallskip}
+
+% Ruta copiable
+\DefineVerbatimEnvironment{ruta}{Verbatim}{fontsize=\small, frame=single, framesep=3mm}
+
+% ============================================================
+\begin{document}
+% ============================================================
+
+\begin{center}
+  \setstretch{1.2}
+  {\small \espaciadas{ITZA Ingeniería} \par}
+  \vspace{0.4cm}
+  {\large \color{azulFICH} \espaciadas[12]{Instalar el MCP de ITZA\ para Civil 3D} \par}
+  \vspace{0.3cm}
+  {\small Guía paso a paso --- civil3D-mcp-itza 1.2.1 \par}
+\end{center}
+\vspace{0.4cm}
+
+% ================================================================
+\section*{Instrucciones para la IA que lea este documento}
+
+\nota{Si sos una IA y el usuario te pasó este PDF, guialo en la instalación:
+\begin{itemize}
+  \item Explicá \textbf{un solo paso por vez} y esperá a que el usuario confirme antes de seguir.
+  \item En cada paso decile qué tiene que ver para saber que salió bien.
+  \item Si algo no coincide, decíselo al usuario. No inventes pasos ni rutas que no estén acá.
+\end{itemize}}
+
+% ================================================================
+\section*{Paso 1 --- Descomprimí el zip}
+
+Clic derecho sobre \texttt{civil3D-mcp-itza-kit-1.2.1.zip} $\rightarrow$ \textbf{Extraer todo}
+$\rightarrow$ \textbf{Extraer}.
+
+
+% ================================================================
+\section*{Paso 2 --- Poné el plugin en Civil 3D}
+
+\begin{enumerate}
+  \item \textbf{Cerrá Civil 3D} si está abierto.
+  \item Apretá \textbf{Windows + R}, pegá esto y Enter:
+\begin{ruta}
+%APPDATA%\Autodesk\ApplicationPlugins
+\end{ruta}
+  \captura{paso2-ejecutar.png}{0.5}
+  \item Copiá ahí la carpeta \texttt{CivilMcpItza.bundle} \textbf{entera} (no solo lo que
+  tiene adentro).
+\end{enumerate}
+
+\textbf{Cómo saber que salió bien:} dentro de \texttt{ApplicationPlugins} ves la carpeta
+\texttt{CivilMcpItza.bundle}, y adentro de ella un archivo \texttt{PackageContents.xml} y una
+carpeta \texttt{Contents}. Puede haber otras carpetas \texttt{.bundle} de Autodesk: no las toques.
+
+\captura{paso2-applicationplugins.png}{0.95}
+
+% ================================================================
+\section*{Paso 3 --- Instalá la extensión en Claude Desktop}
+
+\begin{enumerate}
+  \item Abrí Claude Desktop. Abajo a la izquierda, tocá tu nombre $\rightarrow$
+  \textbf{Configuración}.
+  \captura{paso3-menu-configuracion.png}{0.35}
+  \item Andá a \textbf{Extensiones} $\rightarrow$ \textbf{Configuración avanzada}.
+  \item Bajá hasta \textbf{Desarrollador de extensiones}. Aparece un cartel rojo de advertencia:
+  es normal. Tocá el botón \textbf{Instalar extensión}.
+  \captura{paso3-instalar-extension.png}{0.95}
+  \item Elegí el archivo \texttt{civil3d-mcp-itza-1.2.1.mcpb} del paso 1.
+  \item Se abre la pantalla de \textbf{Civil 3D MCP (ITZA)} con otro cartel rojo (aparece con
+  toda extensión que no es de Anthropic). Tocá \textbf{Instalar}.
+  \captura{paso3-pantalla-instalar.png}{0.6}
+  \item Se abre la ventana \textbf{Configurar}. El botón \textbf{Guardar} está gris hasta que
+  cambies algo: bajá hasta \textbf{Local HTTP bridge port}, cambiá \texttt{3000} por
+  \texttt{3001} y tocá \textbf{Guardar}. No toques los demás campos.
+  \captura{paso3-configurar.png}{0.55}
+  \item Volvé a \textbf{Extensiones}. En \textbf{Instalado en tu computadora} aparece
+  \textbf{Civil 3D MCP (ITZA)}: tocá \textbf{Configurar}.
+  \captura{paso3-lista-extensiones.png}{0.95}
+  \item \textbf{Asegurate de que diga Habilitada}, con el interruptor prendido (en azul). Puede
+  quedar apagada después de instalarla: si está apagada, prendelo.
+  \captura{paso3-habilitada.png}{0.95}
+\end{enumerate}
+
+\textbf{Cómo saber que salió bien:} \textbf{Civil 3D MCP (ITZA)} figura en
+\textbf{Instalado en tu computadora} y adentro dice \textbf{Habilitada}.
+
+% ================================================================
+\section*{Paso 4 --- Abrí Civil 3D}
+
+\begin{enumerate}
+  \item Abrí Civil 3D.
+  \item \textbf{Solo la primera vez} aparece el cartel \textbf{«Seguridad - Archivo ejecutable
+  no firmado»} por \texttt{Civil3DMcpPlugin.dll}. Tocá \textbf{Cargar siempre}.
+\end{enumerate}
+
+\textbf{Cómo saber que salió bien:} en la línea de comandos de Civil 3D escribí
+\texttt{C3DMCPSTATUS} y Enter. Tiene que responder algo que empiece con
+\texttt{Civil3D MCP listener running: True}.
+
+De acá en adelante el plugin se carga solo cada vez que abrís Civil 3D.
+
+% ================================================================
+\section*{Paso 5 --- Probá}
+
+Con Civil 3D abierto, en Claude Desktop abrí un chat nuevo y pedile:
+
+\nota{¿Qué dibujo tengo abierto en Civil 3D y en qué unidades está?}
+
+Claude te pide permiso para usar la extensión: aceptá.
+
+\textbf{Cómo saber que salió bien:} responde con el nombre real del dibujo (por ejemplo
+\texttt{Dibujo1.dwg}) y dice que está en metros.
+
+Después probá algo que modifique el dibujo, por ejemplo:
+
+\nota{Creá una alineación recta de 100 m que arranque en (0,0) y vaya hacia el este.}
+
+\end{document}

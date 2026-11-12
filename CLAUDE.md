@@ -7,20 +7,24 @@ vía un plugin C# + un servidor Node/TypeScript. ITZA lo adoptó como base para 
 automatización de Civil 3D con IA, en vez de pagar la alternativa comercial (HMK CAD Pilot,
 $99/año) o construir algo propio desde cero.
 
-## Repo hermano — ahí vive el resto del contexto
+## Documentación ITZA — todo vive en `proyecto/`
 
-Todo el resto de la investigación, decisiones, bugs encontrados y pruebas reales vive en el repo
-**`app-itza2026`** (la PWA operativa de ITZA), no acá:
+Desde el 11-05 toda la investigación, decisiones, pruebas y tareas viven en este repo (antes
+estaban en `app-itza2026/docs/itza360-agentica/`). `docs/` es del upstream: no mezclar.
 
-- Ruta local: `C:\Users\santi\Desktop\app-itza2026`
-- Doc principal: [`docs/itza360-agentica/investigacion-mcp-civil3d.md`](../../../Desktop/app-itza2026/docs/itza360-agentica/investigacion-mcp-civil3d.md)
-  — investigación completa: por qué MCP y no computer-use/Dynamo, comparación HMK vs. este repo,
-  instalación paso a paso reproducible (sección 8), y todo lo probado en vivo.
-- `docs/tareas.md` de ese repo tiene el puntero de una línea a esta tarea.
+- [`proyecto/tareas.md`](proyecto/tareas.md) — **estado actual y «Qué hacer ahora»** (leer primero).
+- [`proyecto/investigacion.md`](proyecto/investigacion.md) — doc
+  principal: por qué MCP y no computer-use/Dynamo, comparación HMK vs. este fork (sección 9),
+  instalación reproducible (sección 8).
+- [`proyecto/reuniones/`](proyecto/reuniones/) — reuniones con Joaco. **Regla:** una carpeta por reunión
+  `aaaa-mm-dd/` con `TRANSCRIPCION.md` (texto textual) y, si hay, `RESUMEN.md`.
+- [`proyecto/informes/`](proyecto/informes/) — informes LaTeX/PDF enviados a Joaco.
+- [`proyecto/pruebas/`](proyecto/pruebas/) — datos de prueba: `loteo/` (dibujos en
+  `mcpitza-loteo/` y `hmk-loteo/`), `mensura/`, `demo-mcp/`.
+- [`CAMBIOS_ITZA.md`](CAMBIOS_ITZA.md) — cambios de código respecto del upstream.
 
-**Si abrís una sesión de Claude Code acá, para tener el contexto completo conviene también abrir o
-leer esos archivos del otro repo** — acá no se duplica nada de esa documentación a propósito, para
-no tener dos fuentes de verdad desincronizadas.
+`app-itza2026` (`C:\Users\santi\Documents\GitHub\app-itza2026`) solo conserva un puntero en su
+`docs/tareas.md`; no hay que abrirlo para trabajar acá.
 
 ## Objetivo de por qué se clonó este repo específicamente (2026-09-21)
 
@@ -127,8 +131,8 @@ fuente de verdad del estado de fixes y bugs abiertos — no duplicarlo acá.
 
 ## Tareas / ClickUp
 
-Este repo **no tiene su propia lista de ClickUp ni `docs/tareas.md` propio** — se trackea bajo la
-lista de `app-itza2026` (convención de ITZA: cada repo sincroniza solo contra su lista
+Las tareas se escriben en [`proyecto/tareas.md`](proyecto/tareas.md). En ClickUp no tiene lista
+propia — se trackea bajo la lista de `app-itza2026` (convención de ITZA: cada repo sincroniza solo contra su lista
 correspondiente; esto es un sub-tema de la de `app-itza2026`, no un repo independiente). Workspace
 ClickUp `90171542241`, lista **"ITZA App"** (dentro del space "ITZA Dev"):
 
@@ -140,15 +144,15 @@ ClickUp `90171542241`, lista **"ITZA App"** (dentro del space "ITZA Dev"):
 
 ## Próximos pasos
 
-- **Qué hacer en la próxima sesión:** "Qué hacer ahora" de la tarea ITZA360 en
-  `C:\Users\santi\Desktop\app-itza2026\docs\tareas.md` (y el último punto de la sección 7 del doc
+- **Qué hacer en la próxima sesión:** «Qué hacer ahora» de
+  [`proyecto/tareas.md`](proyecto/tareas.md) (y el último punto de la sección 7 del doc
   principal). A 10-13: **etapas 1–6 del loteo hechas** (3 = obra lineal de la Calle 3; 4 = red
   pluvial con `civil3d_pipe`; 5 = alumbrado y arbolado con bloques; 6 = entregables: etiquetas con
   estilos propios + 4 láminas A3 + PDF). Lo que sigue: pulir los pendientes abiertos de la etapa 6
   (al final de `CAMBIOS_ITZA.md`) y el caso real de Joaco. **Tras cada reapertura de Civil 3D,
   `civil3d_drawing info` antes de la primera escritura** (el 10-13 se abrió por error el dwg de HMK), y
   **guardar después de cada paso** (Civil 3D se cerró solo 2 veces en la etapa 6). Datos en
-  `app-itza2026\docs\itza360-agentica\archivos\loteo\` (dibujos en `mcpitza-loteo\` y `hmk-loteo\`),
+  `proyecto\pruebas\loteo\` (dibujos en `mcpitza-loteo\` y `hmk-loteo\`),
   resultados etapa por etapa en la sección 9 del doc principal (columna sacred-g-itza = este fork, vs. HMK).
 - **Pendientes técnicos del fork:** al final de [`CAMBIOS_ITZA.md`](CAMBIOS_ITZA.md).
-- Se mantiene actualizado allá, no acá, para no duplicar.
+- El estado vive en `proyecto/tareas.md` y `CAMBIOS_ITZA.md`; acá solo el resumen, para no duplicar.

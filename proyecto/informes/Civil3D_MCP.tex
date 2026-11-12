@@ -1,0 +1,189 @@
+% !TEX program = xelatex
+\documentclass[12pt, a4paper]{article}
+
+% --- Paquetes ---
+\usepackage[spanish]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{textcomp}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{xltabular}
+\usepackage{colortbl}
+\usepackage{multirow}
+\usepackage{setspace}
+\usepackage{titlesec}
+\usepackage{caption}
+\usepackage{graphicx}
+
+% --- Tipografia: Lux Sans (xelatex obligatorio) ---
+\usepackage{fontspec}
+\setmainfont{LuxSans-Regular}[
+  Path = fonts/,
+  Extension = .ttf,
+  BoldFont = LuxSans-Bold,
+  ItalicFont = LuxSans-Regular,
+  ItalicFeatures = {FakeSlant=0.2},
+  BoldItalicFont = LuxSans-Bold,
+  BoldItalicFeatures = {FakeSlant=0.2},
+]
+
+% --- Margenes ---
+\usepackage[a4paper,top=3cm,bottom=3cm,left=3cm,right=3cm]{geometry}
+
+% --- Hiperlinks ---
+\usepackage[colorlinks=true, linkcolor=black, citecolor=blue, urlcolor=blue]{hyperref}
+
+% --- Colores ---
+\usepackage[table]{xcolor}
+\definecolor{azulPrincipal}{RGB}{28, 61, 90}
+\definecolor{grisClaro}{RGB}{230, 230, 230}
+
+% --- Legibilidad ---
+\setstretch{1.1}
+\setlength{\parskip}{6pt}
+\setlength{\parindent}{0pt}
+\captionsetup{justification=centering}
+\titlespacing{\section}{0pt}{16pt}{0pt}
+\titlespacing{\subsection}{0pt}{12pt}{0pt}
+\titlespacing{\subsubsection}{0pt}{10pt}{0pt}
+
+% ================================================================
+\begin{document}
+
+% ================================================================
+\section{Etapas}
+
+
+\vspace{0.2cm}
+{\renewcommand{\arraystretch}{1.4}
+\setlength{\aboverulesep}{0pt}
+\setlength{\belowrulesep}{0pt}
+\begin{xltabular}{\textwidth}{>{\raggedright\arraybackslash}p{3.2cm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{2.4cm}}
+\toprule
+\rowcolor{grisClaro}
+\textbf{Etapa} & \textbf{Qué se hizo} & \textbf{Archivo} \\
+\hline
+\endhead
+1. Relevamiento topográfico & Se importaron los 35 puntos con cota, se armó la superficie del
+terreno (TIN) con curvas de nivel y se dibujó el perímetro como borde de la superficie. &
+\texttt{etapa1.dwg} \\
+\hline
+2. Proyecto de loteo & La IA diseñó la subdivisión cumpliendo la normativa: 3 calles nuevas,
+4 manzanas, 76 lotes y una plaza del 10,46 \%. Después la pasó a Civil 3D como 78 parcelas
+reales. & \texttt{etapa2.dwg} \\
+\hline
+3. Obra lineal de la calle A & Sobre la calle principal: eje, perfil del terreno, rasante al
+$-$1,2 \%, sección tipo (calzada, cordón cuneta, vereda y taludes), corredor y cálculo del
+movimiento de suelo. & \texttt{etapa3.dwg} \\
+\hline
+4. Desagüe pluvial & Red de conductos por gravedad hacia el punto bajo del terreno: 7 cámaras,
+7 sumideros, 1 descarga y 14 conductos de 0,40 a 0,80 m, dimensionados por el método
+racional. & \texttt{etapa4.dwg} \\
+\hline
+5. Alumbrado y arbolado & 23 columnas de alumbrado alternadas entre veredas, con separación
+máxima de 30 m, y 140 árboles cada 8 m, respetando esquinas, sumideros y cámaras. &
+\texttt{etapa5.dwg} \\
+\bottomrule
+\end{xltabular}}
+
+% ================================================================
+\section{Archivos}
+
+\subsection{Datos de entrada}
+
+\begin{itemize}[itemsep=4pt]
+  \item \textbf{\texttt{puntos-relevamiento.csv}}: los 35 puntos del relevamiento, en una
+  grilla cada 40 m, en formato PNEZD (número, norte, este, cota y descripción). El terreno es
+  un plano que baja hacia el este y hacia el norte; el punto más bajo está en la esquina
+  noreste.
+  \item \textbf{\texttt{terreno-poligono.csv}}: las coordenadas de los 4 vértices del
+  perímetro del terreno.
+  \item \textbf{\texttt{normativa.md}}: la normativa municipal inventada que tenía que cumplir
+  el loteo: anchos de calle y vereda, largo máximo de manzana, lote mínimo, espacio verde y
+  criterios para alumbrado, arbolado y desagüe.
+\end{itemize}
+
+\subsection{Dibujos de Civil 3D}
+
+Cada dibujo contiene todo lo de la etapa anterior más lo nuevo de su etapa. Todos están en
+metros, creados con la plantilla métrica de Civil 3D.
+
+\begin{itemize}[itemsep=8pt]
+  \item \textbf{\texttt{etapa1.dwg}} --- el terreno.
+  \begin{itemize}[itemsep=2pt]
+    \item 35 puntos COGO en el grupo \textit{Relevamiento}, en una grilla cada 40 m, con
+    cotas entre 96,16 y 100,00 m.
+    \item Superficie TIN \textit{Terreno Natural} de 48 triángulos, con curvas de nivel
+    secundarias cada 0,25 m y principales cada 1 m (estilo creado para la prueba).
+    \item Perímetro del terreno como polilínea cerrada de 240 × 160 m en la capa
+    \texttt{PERIMETRO}, aplicado como borde exterior de la superficie. Área:
+    38.400~m\textsuperscript{2}.
+  \end{itemize}
+
+  \item \textbf{\texttt{etapa2.dwg}} --- el loteo.
+  \begin{itemize}[itemsep=2pt]
+    \item Emplazamiento \textit{Loteo} con 78 parcelas de Civil 3D.
+    \item Manzanas M1 y M2 (112,5 × 60 m): 22 lotes cada una, 20 de 10 × 30 m
+    (300~m\textsuperscript{2}) y 2 de esquina de 371~m\textsuperscript{2}.
+    \item Manzana M3 (112,5 × 70 m): 10 lotes de 11 × 35 m (385~m\textsuperscript{2}) y el
+    espacio verde \texttt{EV-01} de 4.017~m\textsuperscript{2} (10,46 \%).
+    \item Manzana M4 (112,5 × 70 m): 22 lotes, 20 de 10 × 35 m (350~m\textsuperscript{2}) y
+    2 de esquina de 433,5~m\textsuperscript{2}.
+    \item Una sola parcela \texttt{CALLES} de 9.182~m\textsuperscript{2}, con las tres
+    calles de 15 m y las ochavas de 4 m.
+    \item Los lotes se nombran por manzana y número (M1-L01, M1-L02, etc.): primero la fila
+    sur, de oeste a este, y después la fila norte.
+    \item Ejes de las calles como polilíneas en la capa \texttt{EJES}: la calle A es N-S y
+    conecta con la calle existente del sur; B y C son E-O.
+  \end{itemize}
+
+  \item \textbf{\texttt{etapa3.dwg}} --- la calle A como obra lineal.
+  \begin{itemize}[itemsep=2pt]
+    \item Alineamiento \textit{Calle A} de 152,5 m, en línea recta de sur a norte.
+    \item Perfil del terreno \textit{Calle A - TN} y rasante \textit{Calle A - Rasante}, de
+    una sola pendiente de $-$1,20 \% (de 99,04 a 97,21 m), con su vista de perfil.
+    \item Ensamblaje \textit{Calle A - Seccion tipo}, simétrico, con 4 subensamblajes por
+    lado: calzada de 3,00 m al $-$2 \% (\texttt{BasicLane}), cordón cuneta con cuneta de
+    0,50 m (\texttt{UrbanCurbGutterGeneral}), vereda de 3,80 m al +2 \%
+    (\texttt{UrbanSidewalk}) y talud 1:2 hasta el terreno (\texttt{DaylightGeneral}).
+    Total: 15,00 m entre líneas municipales.
+    \item Corredor \textit{Calle A}, con secciones cada 5 m y el terreno natural como
+    objetivo de los taludes.
+    \item Superficies del corredor (rasante terminada y subrasante), usadas para el
+    movimiento de suelo: 37,7~m\textsuperscript{3} de desmonte y 149,4~m\textsuperscript{3}
+    de terraplén contra la rasante terminada.
+  \end{itemize}
+
+  \item \textbf{\texttt{etapa4.dwg}} --- el desagüe pluvial.
+  \begin{itemize}[itemsep=2pt]
+    \item Red de tuberías por gravedad \textit{Pluvial Loteo}, de hormigón, con el terreno
+    natural como superficie de referencia.
+    \item Recorrido: calle B (tramo este), calle A hacia el norte y calle C (tramo este),
+    hasta la descarga libre en la esquina noreste, punto bajo del terreno.
+    \item 7 cámaras de inspección (CI-1 a CI-7), 7 sumideros (S1 a S7) y 1 cabecera de
+    descarga (\texttt{DESC}).
+    \item 14 conductos: 7 del colector principal (P-01 a P-07), con diámetros de 0,50 a
+    0,80 m y pendientes de 0,3 a 1 \%, y 7 conexiones de sumideros (L-S1 a L-S7) de 0,40 m.
+    \item Dimensionada por el método racional: caudal de diseño de
+    0,64~m\textsuperscript{3}/s en la descarga y tapada mínima de 1,00 m en todos los conductos.
+  \end{itemize}
+
+  \item \textbf{\texttt{etapa5.dwg}} --- alumbrado y arbolado (resultado final).
+  \begin{itemize}[itemsep=2pt]
+    \item 23 columnas de alumbrado: bloque \texttt{COLUMNA\_AP} (círculo de 0,6 m con cruz)
+    en la capa \texttt{ALUMBRADO}, a 0,5 m de la cara del cordón. Van alternadas entre
+    veredas, con columna en cada cruce y vanos de 30 m como máximo: 7 en la calle A, 9 en la
+    B y 9 en la C, contando una sola vez las de los cruces.
+    \item 140 árboles: bloque \texttt{ARBOL\_2M} (círculo de 2 m) en la capa
+    \texttt{ARBOLADO}, a 1,5 m de la cara del cordón y cada 8 m en las dos veredas, a 5 m
+    como mínimo de las esquinas: 26 en la calle A, 56 en la B y 58 en la C.
+  \end{itemize}
+\end{itemize}
+
+
+\end{document}

@@ -91,3 +91,10 @@ yarn-error.log*
 .env
 .env.local
 .env.*.local
+
+# Civil 3D / AutoCAD (dibujos y comprimidos pesados, respaldos y bloqueos)
+*.dwg
+*.rar
+*.bak
+*.dwl
+*.dwl2

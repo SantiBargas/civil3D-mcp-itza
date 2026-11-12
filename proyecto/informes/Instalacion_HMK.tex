@@ -1,0 +1,243 @@
+% !TEX program = xelatex
+\documentclass[12pt, a4paper]{article}
+
+% --- Paquetes ---
+\usepackage[spanish]{babel}
+\usepackage{enumitem}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{xltabular}
+\usepackage{colortbl}
+\usepackage{setspace}
+\usepackage{titlesec}
+\usepackage{upquote}
+\usepackage{fancyvrb}
+\usepackage{needspace}
+
+% --- Tipografia: Lux Sans (xelatex obligatorio) ---
+\usepackage{fontspec}
+\setmainfont{LuxSans-Regular}[
+  Path = fonts/,
+  Extension = .ttf,
+  BoldFont = LuxSans-Bold,
+  ItalicFont = LuxSans-Regular,
+  ItalicFeatures = {FakeSlant=0.2},
+  BoldItalicFont = LuxSans-Bold,
+  BoldItalicFeatures = {FakeSlant=0.2},
+]
+
+% --- Margenes ---
+\usepackage[a4paper,top=2.5cm,bottom=2.5cm,left=2.5cm,right=2.5cm]{geometry}
+
+% --- Hiperlinks ---
+\usepackage[colorlinks=true, linkcolor=black, citecolor=blue, urlcolor=blue]{hyperref}
+
+% --- Colores ---
+\usepackage[table]{xcolor}
+\definecolor{azulPrincipal}{RGB}{28, 61, 90}
+\definecolor{grisClaro}{RGB}{230, 230, 230}
+\definecolor{fondoNota}{RGB}{242, 246, 250}
+
+% --- Legibilidad ---
+\setstretch{1.1}
+\setlength{\parskip}{6pt}
+\setlength{\parindent}{0pt}
+\titlespacing{\section}{0pt}{16pt}{0pt}
+\titlespacing{\subsection}{0pt}{12pt}{0pt}
+
+% --- Recuadro para notas ---
+\newcommand{\nota}[1]{%
+  \par\noindent\colorbox{fondoNota}{\parbox{\dimexpr\linewidth-2\fboxsep\relax}{#1}}\par}
+
+% ================================================================
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries\color{azulPrincipal} Instalar HMK CAD Pilot y conectarlo con Claude \par}
+  \vspace{0.2cm}
+  {\normalsize Guía paso a paso para Civil 3D --- ITZA Ingeniería \par}
+\end{center}
+\vspace{0.3cm}
+\hrule
+\vspace{0.4cm}
+
+% ================================================================
+\section*{Instrucciones para la IA que lea este documento}
+
+\nota{Si sos una IA (Claude, ChatGPT u otra) y el usuario te pasó este PDF, tu tarea es
+\textbf{guiarlo en la instalación paso a paso}:
+\begin{itemize}[itemsep=2pt, topsep=4pt]
+  \item Explicá \textbf{un solo paso por vez} y esperá a que el usuario confirme que lo terminó
+  antes de pasar al siguiente.
+  \item En cada paso, decile qué tiene que ver para saber que salió bien (está indicado en
+  ``Cómo saber que salió bien'').
+  \item Si algo no coincide con lo esperado, andá a la sección ``Si algo no anda'' antes de
+  seguir. No inventes pasos ni rutas que no estén en esta guía.
+  \item Si tenés acceso a los archivos de la computadora (por ejemplo, Claude Code), podés hacer
+  vos el paso 2. Si no, dale al usuario el contenido para que lo cree a mano.
+  \item Nunca borres ni modifiques otros archivos de la carpeta de HMK.
+\end{itemize}}
+
+% ================================================================
+\section*{Qué se necesita}
+
+\begin{itemize}[itemsep=2pt]
+  \item Windows 10 u 11.
+  \item Civil 3D 2023 o posterior (no sirve AutoCAD LT).
+  \item Claude Desktop instalado y con sesión iniciada.
+  \item Una cuenta en hmktools.com (la prueba gratis dura 14 días y no pide tarjeta).
+\end{itemize}
+
+% ================================================================
+\section*{Paso 1 --- Descargar e instalar HMK}
+
+\begin{enumerate}[itemsep=2pt]
+  \item Entrar a \url{https://hmktools.com/signup} y crear la cuenta con el mail.
+  \item Entrar a \url{https://hmktools.com/install} y descargar el instalador.
+  \item \textbf{Cerrar Civil 3D} y ejecutar el instalador.
+\end{enumerate}
+
+\textbf{Cómo saber que salió bien:} existe la carpeta \texttt{C:\textbackslash Program
+Files\textbackslash HMK Tools} y, dentro de
+\texttt{\%LOCALAPPDATA\%\textbackslash HMKTools\textbackslash CadPilot}, hay un archivo
+\texttt{bridge.js}. Para abrir esa carpeta: tecla \textbf{Windows + R}, pegar
+\texttt{\%LOCALAPPDATA\%\textbackslash HMKTools\textbackslash CadPilot} y Enter.
+
+% ================================================================
+\section*{Paso 2 --- Crear el archivo de conexión (manifest.json)}
+
+HMK no trae listo el archivo que necesita la versión actual de Claude Desktop, así que hay que
+crearlo. Tiene que llamarse \texttt{manifest.json} y estar en la misma carpeta que
+\texttt{bridge.js}:
+\texttt{\%LOCALAPPDATA\%\textbackslash HMKTools\textbackslash CadPilot}.
+
+\subsection*{Opción A: que lo haga Claude Code}
+
+Abrir Claude Code (en Claude Desktop, la pestaña \textbf{Code}) y pedirle:
+
+\nota{Necesito conectar HMK CAD Pilot (ya instalado) con Claude Desktop como extensión sin
+empaquetar. Creá el archivo \texttt{manifest.json} en la carpeta
+\texttt{\%LOCALAPPDATA\%\textbackslash HMKTools\textbackslash CadPilot} (resolvé la ruta real de
+mi usuario), en UTF-8 sin BOM, con el contenido exacto del recuadro del paso 2 de esta guía.
+Antes de crearlo, verificá que en esa carpeta exista \texttt{bridge.js}; si no está, frená y
+avisame. No modifiques ni borres ningún otro archivo de la carpeta. Al terminar, mostrame la
+ruta completa donde quedó el archivo.}
+
+\subsection*{Opción B: a mano}
+
+\begin{enumerate}[itemsep=2pt]
+  \item Abrir la carpeta (Windows + R, pegar la ruta, Enter).
+  \item En el Explorador, activar \textbf{Ver $\rightarrow$ Mostrar $\rightarrow$ Extensiones de nombre de archivo},
+  para que el archivo no quede como \texttt{manifest.json.txt}.
+  \item Crear un archivo nuevo llamado \texttt{manifest.json}, abrirlo con el Bloc de notas,
+  pegar el contenido de abajo y guardar.
+\end{enumerate}
+
+\needspace{26\baselineskip}
+\subsection*{Contenido del archivo}
+
+\begin{Verbatim}[fontsize=\small, frame=single, framesep=3mm]
+{
+  "manifest_version": "0.1",
+  "name": "hmk-cad-pilot",
+  "display_name": "HMK CAD Pilot (Civil 3D)",
+  "version": "1.0.0",
+  "description": "Conector de HMK CAD Pilot para Civil 3D.",
+  "author": { "name": "ITZA" },
+  "server": {
+    "type": "node",
+    "entry_point": "bridge.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/bridge.js"],
+      "env": { "HMK_CAD_URL": "http://localhost:7900/" }
+    }
+  },
+  "compatibility": {
+    "platforms": ["win32"],
+    "runtimes": { "node": ">=16.0.0" }
+  }
+}
+\end{Verbatim}
+
+\textbf{Cómo saber que salió bien:} en la carpeta quedan \texttt{manifest.json} y
+\texttt{bridge.js}, uno al lado del otro.
+
+% ================================================================
+\section*{Paso 3 --- Instalar la extensión en Claude Desktop}
+
+\begin{enumerate}[itemsep=2pt]
+  \item Abrir Claude Desktop $\rightarrow$ \textbf{Configuración} $\rightarrow$ \textbf{Extensiones}.
+  \item Tocar \textbf{Configuración avanzada} $\rightarrow$ \textbf{Instalar extensión sin empaquetar}.
+  \item Elegir la carpeta
+  \texttt{\%LOCALAPPDATA\%\textbackslash HMKTools\textbackslash CadPilot} (la del paso 2).
+\end{enumerate}
+
+\textbf{Cómo saber que salió bien:} en la lista de extensiones aparece \textbf{HMK CAD Pilot
+(Civil 3D)} con el interruptor \textbf{Habilitada} prendido.
+
+% ================================================================
+\section*{Paso 4 --- Abrir Civil 3D y prender el Connector}
+
+\begin{enumerate}[itemsep=2pt]
+  \item Abrir Civil 3D con un dibujo nuevo. Conviene usar la plantilla métrica
+  \texttt{\_Autodesk Civil 3D (Metric) NCS.dwt}, porque la de fábrica está en pies.
+  \item En la cinta de opciones aparece el panel \textbf{Pilot AI}. Tocar \textbf{Connector}.
+\end{enumerate}
+
+\textbf{Cómo saber que salió bien:} al lado de Connector dice \textbf{Connected} (con un punto
+verde), y en la línea de comandos de Civil 3D aparece
+\texttt{HMK CAD Pilot: listener STARTED on http://localhost:7900/}. En Claude Desktop, la
+extensión pasa a mostrar 141 herramientas.
+
+% ================================================================
+\section*{Paso 5 --- Probar}
+
+\begin{enumerate}[itemsep=2pt]
+  \item En Claude Desktop, abrir un chat nuevo.
+  \item Pedirle: \textit{``¿Qué dibujo tengo abierto en Civil 3D y en qué unidades está?''}
+\end{enumerate}
+
+\textbf{Cómo saber que salió bien:} Claude pide aprobación para usar una herramienta de HMK y
+responde con el nombre real del dibujo. Cada acción sobre el dibujo pide aprobación antes de
+ejecutarse.
+
+% ================================================================
+\needspace{12\baselineskip}
+\section*{Si algo no anda}
+
+{\renewcommand{\arraystretch}{1.4}
+\setlength{\aboverulesep}{0pt}
+\setlength{\belowrulesep}{0pt}
+\begin{xltabular}{\textwidth}{>{\raggedright\arraybackslash}p{5cm} >{\raggedright\arraybackslash}X}
+\toprule
+\rowcolor{grisClaro}
+\textbf{Qué pasa} & \textbf{Qué hacer} \\
+\hline
+\endhead
+No existe \texttt{bridge.js} en la carpeta & HMK no quedó bien instalado: volver a correr el
+instalador del paso 1 con Civil 3D cerrado. \\
+\hline
+Claude Desktop no deja instalar la extensión o da error & Revisar que el archivo se llame
+exactamente \texttt{manifest.json} (no \texttt{.txt}) y que el contenido esté completo. Si el
+error menciona Node, instalar Node.js (versión LTS) desde \url{https://nodejs.org} y reintentar.
+\\
+\hline
+La extensión muestra 88 herramientas en vez de 141 & Es normal con Civil 3D cerrado o el
+Connector apagado. Al prender el Connector (paso 4) pasan a 141. \\
+\hline
+Claude responde que no tiene acceso a Civil 3D & Verificar que el Connector diga
+\textbf{Connected}. Si sigue igual, cerrar y volver a abrir Claude Desktop. \\
+\hline
+No aparece el panel Pilot AI en Civil 3D & Cerrar Civil 3D y volver a abrirlo. Si sigue sin
+aparecer, reinstalar HMK (paso 1). \\
+\hline
+Se desconecta en medio del trabajo & Volver a tocar Connector en Civil 3D. \\
+\hline
+Se sacó la extensión de Claude por error & No hace falta reinstalar HMK: repetir solo el
+paso 3. \\
+\bottomrule
+\end{xltabular}}
+
+\end{document}

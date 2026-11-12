@@ -65,7 +65,7 @@ Formato: una sección por día (MM-DD), lo más nuevo arriba. Cada cambio dice *
   Desktop trae uno integrado); la ventana «Configurar» deja «Guardar» gris hasta cambiar algo (se cambió
   el puerto HTTP a `3001`, que además evita chocar con el MCP de Claude Code en el 3000); después hubo que
   **prender el interruptor** de la extensión. Pregunta en chat nuevo → respondió `Dibujo1.dwg`, métrico,
-  vacío. Guía para usuarios: `app-itza2026/docs/itza360-agentica/informe/GuiaInstalacion.pdf`.
+  vacío. Guía para usuarios: `proyecto/informes/GuiaInstalacion.pdf`.
 - Ojo en la máquina de desarrollo: con el bundle instalado, **no** hacer además `NETLOAD` de la DLL de
   `bin\` (las dos pelean por el puerto 8080). Sacar el bundle de `ApplicationPlugins` para volver al flujo
   con `NETLOAD`.
@@ -206,8 +206,8 @@ Civil 3D, rótulo genérico y PDF. Antes de programar se verificó todo en la me
   etiquetas de las cámaras del borde este reubicadas a la izquierda (`offsetX` −16, `offsetY` 3/9,5;
   quedan en «estado arrastrado», con línea de referencia y texto más grande — lo define el estilo). El
   ensamblaje está en la capa `0`, igual que la vista de perfil: congelar `0` vacía la L4 → se dejó
-  visible y se rotuló «Sección tipo». Archivos movidos a `archivos/loteo/mcpitza-loteo/` y
-  `archivos/loteo/hmk-loteo/`.
+  visible y se rotuló «Sección tipo». Archivos movidos a `pruebas/loteo/mcpitza-loteo/` y
+  `pruebas/loteo/hmk-loteo/`.
 - **Siguen abiertos:** las bandas de la vista de perfil usan el estilo de la plantilla (inglés, punto
   decimal); falta una acción para mover una etiqueta existente; el «estado arrastrado» de las etiquetas
   no se configura desde las tools. Causa de los cierres de Civil 3D a 1:1250 sin aislar.
@@ -586,10 +586,10 @@ temporal) y **probado en vivo** sobre `loteo-prueba-sacredgitza-etapa3.dwg` salv
 > Corrida invalidada para repetirla en una sesión limpia (sin contexto del diseño previo ni del de
 > HMK). Se deja como historia; el resultado válido de la etapa 2 (80 lotes, 85 parcelas con
 > `create_many`, `loteo-prueba-sacredgitza-etapa2.dwg`) está en la sección 9 de
-> `investigacion-mcp-civil3d.md`.
+> `investigacion.md`.
 
 Etapa 2b completa sin código y **sin bugs**: Site + 78 parcelas + ejes, áreas exactas (38.400,00 m²).
-Detalle en la sección 9 de `investigacion-mcp-civil3d.md` (app-itza2026). Limitación encontrada:
+Detalle en la sección 9 de `investigacion.md` (app-itza2026). Limitación encontrada:
 **no hay creación en lote** — el token de aprobación está atado al fingerprint del dibujo, que cambia
 con cada objeto creado, así que 78 parcelas = 156 llamadas (~14 min). Ver pendientes.
 
@@ -747,11 +747,11 @@ exterior), idéntica a HMK. En el camino aparecieron:
 
 - **Distribución de actualizaciones (10-19):** hoy cada versión = `npm run kit` + volver a mandar el zip
   a mano (kit 1.2.1 mandado a Joaquín el 10-19). Buscar un canal más cómodo (ideas en el punto 20 de la
-  sección 7 de `app-itza2026/docs/itza360-agentica/investigacion-mcp-civil3d.md`). Al publicar una
+  sección 7 de `proyecto/investigacion.md`). Al publicar una
   versión nueva: subir `version` en `package.json` (el bundle y el `.mcpb` la toman de ahí).
 
 - Prueba del loteo: **etapas 1–6 hechas** (10-13; dibujos en
-  `app-itza2026/docs/itza360-agentica/archivos/loteo/mcpitza-loteo/`). Abiertos de la etapa 6: bandas
+  `proyecto/pruebas/loteo/mcpitza-loteo/`). Abiertos de la etapa 6: bandas
   de la vista de perfil con el estilo de la plantilla (inglés, punto decimal); acción para mover una
   etiqueta existente; configurar el «estado arrastrado» de las etiquetas; causa de los cierres de
   Civil 3D con ventana a escala de anotación 1:1250 sobre la vista de perfil.
