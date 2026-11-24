@@ -44,7 +44,7 @@ public static class AlignmentCommands
             ["type"] = MapAlignmentEntityType(CivilObjectUtils.GetStringProperty(entity, "EntityType") ?? entity?.GetType().Name),
             ["startStation"] = CivilObjectUtils.GetPropertyValue<double?>(entity, "StartStation") ?? 0,
             ["endStation"] = CivilObjectUtils.GetPropertyValue<double?>(entity, "EndStation") ?? 0,
-            ["length"] = CivilObjectUtils.GetPropertyValue<double?>(entity, "Length") ?? 0,
+            ["length"] = CivilObjectUtils.GetEntityLength(entity),
           });
         }
       }

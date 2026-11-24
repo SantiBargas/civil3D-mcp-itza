@@ -11,8 +11,155 @@ Formato: una sección por día (MM-DD), lo más nuevo arriba. Cada cambio dice *
 
 ---
 
+## 11-20 (2026) — semana 2 del plan: corredores (EN CURSO)
+
+Dibujo `proyecto/pruebas/corredores/calle3-semana2.dwg` (copia de la etapa 3 del loteo). Se armó **de
+cero** una segunda calle «Calle 3B» (X=5160, 136,5 m, paralela a la Calle 3) sin tocar la original.
+
+| Paso | Resultado |
+|---|---|
+| `alignment create` (2 puntos) | ✅ |
+| `profile create_from_surface` (TN) | ✅ pendiente −1,2 % de 98,72 a 97,08 |
+| `profile create_layout` con estación/cota/pendiente | ❌ crea el perfil **vacío** (ignora los parámetros); hubo que usar `add_pvi` ×2 → ✅ rasante 98,82 → 97,182 |
+| `assembly create` + 8× `create_subassembly` del catálogo (BasicLane, BasicCurbAndGutter, BasicSidewalk, DaylightStandard; izquierda y derecha) | ✅ **modo 1 (elegir del catálogo)**; encadenado con `attachTo` (nombre autogenerado) + `attachPointIndex` |
+| `corridor create` (Terreno Natural como objetivo) | ✅ 14 feature lines, 195 puntos / 336 triángulos (igual que la Calle 3) |
+| `corridor surface_add` Top + Datum, `compute_volumes` | ✅ corte 242,1 / relleno 64,8 m³ |
+| `corridor create` con el ensamblaje ya existente «Calle 15 m» | ✅ **modo 2 (usar uno del dibujo)** |
+
+Fallas / límites vistos:
+- `create_subassembly` **ignora `subassemblyName`**: el nombre sale `Subassembly.<Clase>-<Lado>-<guid>`; para encadenar hay que copiarlo de la respuesta. Pasar siempre `attachTo`: con dos carriles, `attachPointIndex` solo es ambiguo.
+- `create_layout`: ver arriba (perfil vacío sin error).
+- `assembly get` vuelca ~60 propiedades de .NET por subensamblaje (miles de tokens); falta un modo resumido (solo nombre, lado y puntos).
+- `profile add_pvi` pide `station` (el schema de `request_approval` rechaza `pviStation`).
+- **Modo 3 (diseñar uno nuevo): sin probar** — no hay acción para listar el catálogo ni para importar un `.pkt` de Subassembly Composer; solo se parametrizan los del catálogo por `Key`.
+- Falta: estilos de código/etiquetas del corredor y una calle real de ITZA.
+
+### Arreglos de secciones y `target_mapping` (11-20, compilado; los de secciones probados en vivo)
+- `section get_section_data`: ahora lee `Section.SectionPoints` de cada superficie muestreada
+  (`surfaceName`, `offsets`, `elevations`) y acepta `surfaces` para filtrar. ✅ Estación 60 de la Calle 3B:
+  terreno 98,12 / 98,00 / 97,88 a −15 / 0 / +15 (= plano a mano); corona del corredor 98,10 (= rasante 98,82 − 0,012·60).
+  El nombre de la superficie del corredor sale como «Calle 3B Calle 3B - Top» (lo arma Civil 3D).
+- `section create_sample_lines`: con `interval` ahora **incluye la estación final** (0…120 y 136,5). ✅
+- `create_sample_lines`: el nombre de cada línea pasó de `SL-<est>` a `<grupo> <est>` porque Civil 3D exige
+  nombres únicos en todo el dibujo: con `SL-<est>` un segundo grupo fallaba («Sample line name should not duplicate»). ✅
+- `corridor target_mapping_set`: nuevo campo opcional `subassemblyName` en cada target (coincide por
+  texto, p. ej. `"Left"` o `"Daylight*-Right"`); sin él sigue aplicando a todos. **Sin probar en vivo**.
+  11-20: `target_mapping_get` ya devuelve `subassemblyName` (plugin OK), pero el set falla con «Approval token
+  does not match»: el schema de `targets` en `corridorDomain.ts` (~línea 267, tool `civil3d_corridor`) y el del
+  tool suelto (~línea 670) **no declaran `subassemblyName`**, zod lo descarta y la huella del token cambia
+  (solo el schema de ~línea 155 lo tiene, pero no es el que valida). Fix pendiente: agregarlo en los dos,
+  `npm run build`, `/mcp` → Reconnect, probar `Talud-Left` → `Calle 3 - Top` y verificar que `Talud-Right` no cambia.
+- `scripts/civil3d.ps1 -Compilar`: la primera vez que se cierra Civil 3D con ventana el script dice
+  «acad.exe sigue vivo» y aborta, aunque el proceso muere unos segundos después; basta repetir el comando. Falta arreglarlo (esperar con sondeo).
+
+### Secciones y `target_mapping` (mismo día, dibujo de arriba)
+
+| Acción | Resultado |
+|---|---|
+| `section create_sample_lines` (cada 20 m, ±15 m, grupo «SL Calle 3B») | ✅ 7 líneas (0–120). ⚠️ **falta la de la estación final** (136,5): el bucle `station <= EndingStation` en `SectionCommands.cs` solo suma `interval`, nunca agrega el final. Hay que pasar `stations` a mano |
+| `section list_sample_lines`, `view_list` | ✅ |
+| `section get_section_data` | ❌ devuelve `surfaces: []` fijo (`SectionCommands.cs:158` no lee nada); `includeElevations` y `surfaces` ignorados |
+| `section view_create` | ✅ 7 vistas, estilo «Land Desktop Sections» (el estilo por defecto; no se miró el dibujo, solo se listó) |
+| `corridor target_mapping_get` | ✅ lista `TargetDTM` de cada talud con superficie asignada |
+| `corridor target_mapping_set` (`Terreno Natural` → `Calle 3 - Top` y vuelta) | ✅ reconstruye solo; el corte pasó de 242,1 a 753,0 m³ y al revertir volvió a 242,1 exacto. ⚠️ aplica a **ambos lados** (mismo `parameterName` en los dos taludes): no se puede apuntar uno solo |
+| `section` sobre superficie del corredor | ⚠️ las líneas muestrean solo `Terreno Natural` + `Calle 3B - Top`; no hay forma de pedir secciones del ensamblaje (código por código) |
+
+---
+
+## 11-16 (2026) — semana 1 del plan: superficies + ciclo de Civil 3D automatizado
+
+### `civil3d_drawing new` ya no cuelga el plugin sin dibujo abierto
+- **Problema:** con Civil 3D en la pestaña «Inicio», `NewDrawingAsync` usaba
+  `ExecuteInCommandContextAsync`, cuyo callback nunca corre sin documento: la operación quedaba «en
+  curso» para siempre, bloqueaba la cola (todo lo siguiente daba timeout) y hubo que matar Civil 3D.
+- **Fix:** nueva `CivilExecution.RunInApplicationContextAsync` (serializada + `Application.Idle`);
+  `NewDrawingAsync` crea el documento ahí. Se borró `ExecuteInCommandContextAsync` (era su único uso).
+- **Estado:** probado en vivo con un dibujo abierto ✅ y desde «Inicio» sin dibujo ✅ (crea
+  `Dibujo1.dwg` métrico, el plugin sigue respondiendo). ⚠️ En el dibujo nuevo sin guardar, `info` y
+  `new` devuelven como `filePath` la ruta de la **plantilla** `.dwt` (`Database.Filename`): un
+  `save` sin `saveAs` podría escribir sobre la plantilla. Sin probar; usar siempre `saveAs`.
+
+### `scripts/civil3d.ps1`: abrir, cerrar y recompilar sin pasos a mano
+- `-Abrir [-Dibujo x.dwg]` abre Civil 3D 2026 métrico en español (dibujo nuevo con la plantilla
+  métrica, o el `.dwg` dado) y espera a que el plugin escuche en 8080; `-Cerrar` mata `acad.exe`;
+  `-Compilar [-Ts] [-Abrir]` cierra, compila, copia la DLL al bundle de autocarga y reabre.
+- El plugin carga solo desde `%APPDATA%\Autodesk\ApplicationPlugins\CivilMcpItza.bundle` (instalado
+  por el kit del 10-19): ya no hace falta `NETLOAD`. El script agrega la carpeta del bundle a
+  `TRUSTEDPATHS` de los perfiles C3D (con Civil 3D cerrado) para que la DLL recompilada, sin firma,
+  no dispare el diálogo «Archivo ejecutable no firmado».
+- `-Cerrar` primero pide cierre normal (`CloseMainWindow`, espera 45 s) y solo si no cierra lo mata
+  (espera hasta 600 s): matar `acad.exe` tardaba 1–4 min (volcado de error) y al reabrir sale el
+  aviso «Recuperación del dibujo» (cerrarlo; el dibujo ya estaba guardado).
+- **Estado:** `-Compilar -Ts -Abrir -Dibujo` probado ✅; `TRUSTEDPATHS` escrito en los dos perfiles ✅
+  (sin diálogo de DLL sin firma en la reapertura siguiente).
+
+### Prueba de superficies (dibujo `proyecto/pruebas/superficies/superficies-semana1.dwg`)
+Datos: los 35 puntos de `pruebas/loteo/puntos-relevamiento.csv` (un plano: z = 100 − 0,008·ΔE − 0,012·ΔN)
+y una superficie «Diseño» (plataforma a 98,00 en E 5040–5200 / N 10040–10120). Resultados verificables
+a mano porque el terreno es un plano.
+
+| Acción | Resultado |
+|---|---|
+| `point import` (PNEZD, grupo) | ✅ 35 puntos, E/N bien |
+| `surface create` + `add_points` | ✅ TIN 48 triángulos, 38.400 m² (igual que etapa 1). ⚠️ queda en capa `0` |
+| `get`, `get_statistics`, `get_elevation` | ✅ cota (5100; 10100) = 98,00 exacta |
+| `get_elevation_along` | ⚠️ solo devuelve los vértices dados; ignora `stepDistance` |
+| `sample_elevations` | ❌ inutilizable: pide `method` = grid/points/transect pero el schema público solo acepta los métodos de volumen |
+| `extract_contours`, `contour_interval_set` | ✅ 8 curvas cada 0,5 m. `extract_contours` escribe sin pedir aprobación |
+| `add_breakline`, `add_boundary` (outer) | ✅ «Diseño»: 2 triángulos, 12.800 m² |
+| `compute_volume` / `volume_calculate` | ✅ desmonte 2.976, terraplén 1.952, neto −1.024 m³ = cálculo a mano (convención base = TN OK) |
+| `volume_by_region` | ✅ 2.671 / 111 m³ = cálculo a mano |
+| `volume_report` | ⚠️ cifras bien, texto mal: «Fill exceeds cut» cuando sobra desmonte (en inglés, como todo el plugin) |
+| `comparison_workflow` | ✅ (`elevationDeltaMin`/`Max` = diferencia de mínimos / de máximos; no es un error) |
+| `drainage_workflow` | ✅ caudal racional 0,427 m³/s correcto; el recorrido llega al punto bajo (pasos angulares discretos) |
+| `analyze_slope` / `_elevation` / `_directions` | ❌ solo leen un análisis existente; no lo generan |
+| `watershed_add` | ❌ no crea cuencas («may require manual configuration») |
+| Etiquetas de superficie | ❌ no hay (`label_add` no tiene `kind` de superficie) |
+| Cambiar estilo de una superficie existente | ❌ no hay acción (solo `style` al crear) |
+| Agregar **grupo de puntos** a la superficie | ❌ no hay (solo coordenadas: la superficie no queda vinculada a los puntos) |
+| Nube de puntos (`.las`, ReCap) | ❌ no hay ninguna acción |
+| `create_from_dem` | sin probar (falta un DEM de prueba) |
+
+`contour_interval_set` cambia el **estilo** de la superficie, que es compartido: afecta a todas las
+superficies con ese estilo.
+
+### Tanda de arreglos de superficies (mismo día; probada en vivo sobre el dibujo de arriba)
+Métodos verificados antes en la metadata de `AeccDbMgd.dll` 2026. Código nuevo en
+`SurfaceItzaCommands.cs` (partial de `SurfaceCommands`) y `LasReader.cs`.
+
+| Acción | Qué hace | Prueba |
+|---|---|---|
+| `add_point_group` (nueva) | `PointGroupsDefinition.AddPointGroup`: la superficie queda vinculada al grupo | ✅ «TN grupo» + «Relevamiento»: 35 puntos, 48 triángulos (= TN) |
+| `style_set` (nueva) | cambia el estilo; si no existe, error con la lista de estilos (sin caer a otro) | ✅ ambos casos. No pide aprobación |
+| `analysis_generate` (nueva) | genera rangos de cotas (m), pendientes (entrada en %) u orientaciones (entrada en grados); rampa verde→rojo | ✅ los tres. Pendiente del plano 0,01442 = √(0,008²+0,012²): Civil 3D la guarda como relación; 1 % → 0,01 ✅. Los rangos se devuelven en unidades guardadas (relación / radianes) |
+| `label_add` (nueva) | etiquetas de superficie: `spot_elevation`, `slope`, `slope_two_point` (pares), `contour` (línea, o varias con `interval`); `labelStyle` opcional estricto | ✅ 2 cotas, 1 pendiente, 1 de 2 puntos, 1 línea de curvas, 16 líneas con `interval` 50 |
+| `create_from_las` (nueva) + job `surface_las_import` | lee el `.las` directo (no hay API de nube de puntos en .NET ni COM), filtra clases (por defecto 2 = suelo), raleo en grilla (media o mínimo) y crea la TIN. Sin LAZ | ✅ `sintetico.las` (14.072 pts: suelo/vegetación/edificio): solo clase 2, 2.501 vértices a 4 m, cota bajo el edificio 98,222 vs 98,22 del plano. Job sin probar |
+| `get_elevation_along` | `stepDistance` densifica; devuelve progresiva y cota (nula fuera de la superficie) | ✅ cada 25 m: 98,8 → 98,0 |
+| `sample_elevations` | el schema público acepta grid/points/transect | ✅ transecta 100 → 98,08 |
+| `create` / `create_from_dem` | capa por defecto = la de «TinSurface» en la configuración del dibujo | ✅ `C-TOPO` (antes `0`) |
+| `volume_report` | signo del balance | ✅ «Cut exceeds fill by 1024» |
+| `watershed_add` | ahora error `NOT_SUPPORTED` (la API no calcula cuencas) con la cantidad de cuencas existentes; sin aprobación | ✅ |
+
+Además: `npx vitest run` falla en los 40 archivos («Cannot read properties of undefined (reading
+'config')», también en tests no tocados; pasaban el 10-13; probablemente Node 24). `tsc --noEmit` limpio.
+
 ## 10-26 (2026) — multiversión Civil 3D 2026 + 2027 (EN CURSO, sin código todavía)
 
+- **Estado 11-20:** Civil 3D 2027 instalado en esta PC (`C:\Program Files\Autodesk\AutoCAD 2027\`,
+  lado a lado con la 2026, que sigue intacta). El instalador web de Autodesk no arrancaba solo antes;
+  lanzado desde Claude funcionó. Sigue sin .NET 10 SDK (solo 8.0.425) y sin `C_References\2027\`.
+  Dos caminos: (1) **una sola DLL .NET 8** para ambas, ampliando `SeriesMax` del bundle a R26.0 (lo
+  más barato; solo falla si Autodesk cambió algo que usa el plugin); (2) **dos DLL** (net8 + net10,
+  cada una contra sus referencias; lo más seguro, pero con SDK .NET 10 y dos compilaciones).
+  Recomendación: probar primero el 1 en el 2027 de esta PC y pasar al 2 solo si falla.
+
+- **Segundo barrido en 2027 (11-20, DLL con los fixes):** OK `check_surface`/`check_alignment` (4 triángulos, largos 60/62,83/60), `qc generate_report` (5 chequeos; `outputPath` debe estar dentro de las raíces permitidas, no sirve el scratchpad), `label_add_many` (áreas de parcela), `label_style_create`, layout + `layout_add_entities` + `sheet_publish_pdf` (PDF válido), superelevación `get`/`report`, `sight_distance calculate`, `slope_analysis`, detención `basin_size_calculate`, `cost_estimation`. No soportado en ninguna versión (no es regresión): `grading group_create` (la API .NET no expone `GradingGroup`, solo el tipo interno), `sheet_set_create` y `detention stage_storage` (el plugin lo declara sin API gestionada). Sin probar: `create_from_dem` (falta un archivo DEM), `label_add` suelto (pide `objectType`/`objectName`/`labelType`) y grading por criterios.
+- **Decisión 11-20: una DLL por versión** (2026 = .NET 8 contra `C_References`; 2027 = .NET 10 contra `C_References\2027`, copiada de `AutoCAD 2027\`, `ACA\`, `C3D\`; fuera de git). SDK .NET 10.0.404 instalado. Hecho y verificado en vivo: `.csproj` con propiedad `PluginTfm` (default `net8.0-windows`) y `Compile Remove="obj/**"`; el build de 2027 usa `-p:PluginTfm=net10.0-windows -p:Civil3DReferencesPath=../C_References/2027 -p:BaseIntermediateOutputPath=../obj-net10/` (`obj-*/` en `.gitignore`); `PackageContents.xml` con un bloque por versión (`Contents\2026\`, `Contents\2027\`, R25.1 / R26.0); `build-kit.ps1` compila las dos; `civil3d.ps1` copia a `Contents\2026`. Civil 3D 2027 corre sobre .NET 10.0.15 y carga `Contents\2027\Civil3DMcpPlugin.dll`. `TRUSTEDPATHS` de 2027 (`HKCU\...\R26.0\ACAD-A100:40A\Profiles\<<C3D_Metric>>` e `<<C3D_Imperial>>`) con las dos carpetas del bundle: así no sale el cartel «Archivo ejecutable no firmado» tras cada compilación. Otros carteles de Autodesk (asociación DWG → «No asociar»; «Profile MFE» → completar y Guardar) se cierran una vez. Cerrar 2027 a la fuerza evita el «¿Guardar cambios?».
+- **Fix en 2027:** `civil3d_pipe get/list` fallaban con «Retrieve attribute failed»: en 2027 `Network.StyleName`, `ReferenceSurfaceId`, `ReferenceAlignmentId` y `PartsListId` lanzan `CivilException` si el atributo no está asignado. Ahora `PipeNetworkCommands` los lee con `SafeStyleName`/`SafeObjectId` (devuelven null). Verificado en vivo en 2027. **Probado en 2026 (11-20, `civil3d.ps1 -Compilar -Abrir`):** el fix de redes funciona igual (`get`/`list` OK) y `check_surface` (0 triángulos con 4 reales) y `check_alignment` (longitud 0 en las entidades; `alignment get` también) fallan idéntico → son bugs previos del código, no de 2027 (lecturas por reflexión de `NumberOfTriangles` en `GetGeneralProperties` y de `Length` en la entidad). **Arreglados el 11-20:** `CivilObjectUtils.GetSurfaceTriangleCount` (triángulos desde `GetTinProperties()`, no `GetGeneralProperties()`) para `check_surface` y el QC consolidado, y `CivilObjectUtils.GetEntityLength` (si `Length` viene vacío usa `EndStation - StartStation`) para `check_alignment`, el QC consolidado y `alignment get`. Verificado en 2026: 4 triángulos, 0 hallazgos, entidades 60 / 62,83 / 60 m; la DLL de 2027 se recompiló y copió al bundle y al kit, sin probar en vivo en 2027. **Kit 11-20:** `build-kit.ps1` genera `dist\kit\civil3D-mcp-itza-kit-1.2.1.zip` con `Contents\2026\` (net8) y `Contents\2027\` (net10) + el `.mcpb`; textos del manifiesto y README de Claude Desktop dicen «2026 o 2027». Correrlo desde bash (`powershell.exe -File scripts/build-kit.ps1`): en la consola de PowerShell 5.1 el `npm warn` se toma como error. Pendiente: probar el kit instalado en una PC limpia (la de Joaquín) y revisar `docs/DEPLOYMENT.md` (sigue diciendo 2026).
+- **`detention stage_storage` implementado (11-20):** antes daba error («la API .NET no expone el área inundada a una cota»). Ahora `DetentionCommands.CalculateDetentionStageStorageAsync` lee los triángulos del TIN (`TinSurface.Triangles`, `Vertex1..3.Location`, `IsVisible`) y, por cada cota, recorta cada triángulo contra el plano z = cota: área exacta; el volumen acumulado integra el área exacta (A(z) es cuadrática por tramo → Simpson exacto), no promedia extremos. Respuesta: `table` con `elevation`/`area`/`incrementalVolume`/`cumulativeVolume`, `totalStorage`, `connectivity`, `notes`. **Zonas no conectadas:** sin `seedPoint` cuenta todo lo que esté bajo la cota (incluye bolsones aparte; queda avisado en `notes`); con `seedPoint {x, y}` (nuevo, en `detentionDomain.ts`) cuenta solo la región conectada a ese punto por aristas inundadas (arista con algún tramo bajo la cota). Si el punto está más alto que la cota, área 0. **Descarga (SI, m y m³/s, g = 9,81):** si se pasa `outletDiameter` (m, orificio: Q = Cd·A·√(2gH), H sobre el centro = fondo + D/2, Cd 0,6) o `weirLength` con `outletType: weir` (m, vertedero: Q = C·L·H^1,5, cresta en `bottomElevation`, C 1,84; antes el default era 3,33 imperial), cada fila suma `discharge`; `riser` y sin diámetro/largo → sin columna y una nota lo avisa. Verificado en 2027 contra cálculo a mano (orificio D=0,2 m a cota 10: 0,2627; vertedero L=2 m: 116,372); falta repetir en 2026 (misma DLL de código, se despliega en la tarea 2). Verificado en **2026 y 2027**: pozo piramidal 20×20 m, esquinas z=10, centro z=0 → área 25/100/225/400 m² y volumen 20,833/166,667/562,5/1333,333 m³ (analítico 4h² y 4h³/3, exacto); `compute_volume` contra un plano a z=10 da 1333,333 m³; superficie de dos pozos separados por una cresta → con `seedPoint` 100 m² a cota 5 y 1333,333 m³ a cota 10, sin él 200 m² y 2666,667 m³.
+- **Grading (11-20): `group_create` NO es viable por COM ni .NET.** Metadata verificada (no prueba y error) en `AeccDbMgd.dll` y `Autodesk.AECC.Interop.{Land,Roadway,Pipe,Survey,UiLand}.dll` de 2026 y 2027: no hay tipo `GradingGroup` gestionado ni COM (`IAeccSite` solo tiene Parcels/ParcelSegments/Alignments/FeatureLines; `Interop.Land` solo trae `IAeccGradingStyle(s)` y `IAeccSettings*Grading*`, que son configuración de comandos). Existe `Grading` en .NET pero sin constructor público ni fábrica; el grupo nativo (`AeccDbGradingGroup`) solo se crea con el comando interactivo `AeccCreateGradingGroup` (también hay `AeccCreateGrading`, `AeccCreateGradingCriteriaSet`; son diálogos). Por eso todo el dominio por grupo (`group_list/get/delete/volume/surface_create`, `list/get/create/delete` de gradings) estaba construido sobre una propiedad `Site.GradingGroups` que no existe: nunca pudo funcionar. Cambios: `group_create` ahora responde un error explícito (antes «Add method not found»), `group_list` agrega una `note` (puede venir vacío aunque haya grupos). Sin inventar: crear gradings con criterio queda **pendiente**; solo sería posible manejando los diálogos de `AeccCreateGradingGroup`/`AeccCreateGrading` por línea de comandos, **Probado el 11-20 en 2026** (automatización COM externa: `Document.SendCommand("_AeccCreateGradingGroup ")` con un dibujo métrico nuevo, con y sin un site creado antes): el comando se acepta pero no abre ningún diálogo (revisadas todas las ventanas de `acad.exe`, visibles y ocultas), no pide nada en la línea de comandos y deja a Civil 3D rechazando las llamadas COM (`RPC_E_CALL_REJECTED`) hasta cerrarlo a la fuerza. Probablemente solo funciona desde la barra «Grading Creation Tools». Descartado como vía automatizable.
+  **`criteria_list` arreglado:** buscaba `civilDoc.GradingCriteriaSets` (no existe). Los criterios están en `civilDoc.Styles.GradingCriteriaSets` (`StylesRoot`), y cada `GradingCriteriaSet` los lista con `GradingCriteriaIds()` (nuevo helper `EnumerateGradingCriteria`; también lo usa `FindGradingCriteriaId`). La plantilla métrica trae un set «Basic Set» con 4 criterios: Grade to Distance / Elevation / Relative Elevation / Surface. Crear sets/criterios es viable por .NET (`GradingCriteriaSetCollection.Add`, `GradingCriteriaSet.AddCriteria`), no implementado. Verificado en 2026 y 2027 (`criteria_list` 4 criterios; `group_create` error nuevo solo probado en 2026, en 2027 es el mismo código). Kit reconstruido el 11-20 con estas DLL (`dist\kit\civil3D-mcp-itza-kit-1.2.1.zip`).
+- **Vitest arreglado (11-20):** `npx vitest run` fallaba en los 40 archivos con `Cannot read properties of undefined (reading 'config')` (hasta un test trivial). Causa: el directorio de trabajo con la unidad en minúscula (`c:\Users\...`, como lo abre VS Code / Git Bash) hace que vitest cargue dos copias de `@vitest/runner` y el runner queda sin inicializar. **Correr desde un shell con `cd C:\Users\santi\Documents\GitHub\civil3D-mcp-itza` (C mayúscula):** pasan 472 de 473. El que falla es `security_boundary.test.ts > keeps generated artifact writes behind FileBoundary`: marca `LasReader.cs:40` (`new FileStream` de lectura; viene del trabajo de LAS en `SurfaceItzaCommands`/`LasReader`, no de esta tarea). Pendiente: leer el LAS por `FileBoundary` o ajustar el patrón del test a solo escrituras.
 - **Por qué:** Joaquín avisó que en ITZA usan **Civil 3D 2027**. El kit 1.2.1 (10-19) solo sirve para
   2026 (DLL compilada contra 2026 y bundle con `SeriesMin/Max="R25.1"`): en 2027 el bundle se ignora.
   Objetivo: **un solo kit que funcione en 2026 y 2027**.
@@ -36,7 +183,11 @@ Formato: una sección por día (MM-DD), lo más nuevo arriba. Cada cambio dice *
      la guía (hoy dice «Civil 3D 2026»).
 - **Ojo:** con 2026 y 2027 instalados en la misma PC, no abrir los dos a la vez con el plugin cargado
   (los dos querrían el puerto 8080).
-- **Estado:** solo plan documentado; sin código ni compilación.
+- **Prueba 11-20 (camino 1) OK:** con `SeriesMax="R26.0"` en el `PackageContents.xml` del bundle instalado,
+  la DLL .NET 8 (sin recompilar) cargó en Civil 3D 2027 y `civil3d_drawing info` respondió. En 2027 aparece un
+  diálogo de seguridad «Archivo ejecutable no firmado» (elegir «Cargar siempre») y, la primera vez, otro de
+  asociación DWG (omitir). Pruebas en vivo en 2027 (dibujo nuevo, sin guardar): `health`, superficie (create, add_points, estadísticas, elevación), alineamiento (create con curva, get: 182,83 m) y parcelas por COM (create_site, create_many: 2 × 600 m²) — todo OK. **Barrido completo 11-20 en 2027** (dibujo nuevo, sin guardar), lectura y escritura: OK perfil (EG desde superficie + layout), ensamblaje + 2 BasicLane, corredor (build, rebuild por job, superficie del corredor 94 triángulos, QC), líneas de muestreo (10) + vistas de sección (10), red de tuberías (add_many, HGL, hidráulica, QC, interferencias, QTO), red a presión (create/get), puntos COGO, polilínea, feature line, breakline, curvas de nivel, layout, hidrología (Tc, runoff, flow path, watershed, hidrograma), COGO, estilos, data shortcuts. **Fallas en 2027:** (1) `civil3d_pipe get`/`list` → `CivilException: Retrieve attribute failed` en `Network.StyleName` (`PipeNetworkCommands.ToPipeNetworkDetail`), incluso con red vacía; probable regresión de 2027, falta confirmar en 2026 y envolver en try. (2) `check_surface` informa 0 triángulos (con 4 reales). (3) `check_alignment` informa longitud 0 de las entidades (`Length` por reflexión; `alignment get` también da 0). `section get_section_data` es un stub del upstream (lista vacía), no es de 2027. Sin probar: sheet sets/PDF, etiquetas (`label_add`), grading groups, superelevación, DEM. Falta llevar
+  `SeriesMax="R26.0"` al `build-kit.ps1`/bundle del repo. `scripts\civil3d.ps1` sigue fijo a 2026.
 
 ---
 
@@ -734,6 +885,13 @@ exterior), idéntica a HMK. En el camino aparecieron:
 ---
 
 ## Pendientes
+
+- **Superficies (11-16):** tanda de arreglos hecha y probada. Queda: `create_from_dem` sin probar
+  (falta un DEM); job `surface_las_import` sin probar; `drawing save` de un dibujo nuevo sin
+  `saveAs` (¿sobrescribe la plantilla `.dwt`?); `-Cerrar` con el dibujo guardado no cerró por las
+  buenas en 45 s y el forzado tardó >10 min (el 11-16, tras la prueba de superficies);
+  `extract_contours` escribe sin aprobación y la huella del dibujo ignora entidades AutoCAD y
+  etiquetas (el token sigue válido tras crearlas); vitest roto (ver 11-16).
 
 - **Caso inverso: terminar dibujos existentes (Fabián, reunión 10-28):** en vez de que el MCP cree el
   dibujo de cero, darle un dibujo ya hecho por el equipo y que haga las terminaciones, sobre todo las

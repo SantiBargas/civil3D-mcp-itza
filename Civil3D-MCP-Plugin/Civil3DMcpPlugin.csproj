@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <PluginTfm Condition="'$(PluginTfm)' == ''">net8.0-windows</PluginTfm>
+    <TargetFramework>$(PluginTfm)</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
@@ -9,6 +10,10 @@
     <Civil3DReferencesPath Condition="'$(Civil3DReferencesPath)' == ''">..\C_References</Civil3DReferencesPath>
   </PropertyGroup>
   <Import Project="GeneratedVersion.props" />
+
+  <ItemGroup>
+    <Compile Remove="obj/**" />
+  </ItemGroup>
 
   <Target Name="ValidateCivil3DReferences" BeforeTargets="PrepareForBuild">
     <Error Condition="!Exists('$(Civil3DReferencesPath)\accoremgd.dll') Or !Exists('$(Civil3DReferencesPath)\AcDbMgd.dll') Or !Exists('$(Civil3DReferencesPath)\acmgd.dll') Or !Exists('$(Civil3DReferencesPath)\AecBaseMgd.dll') Or !Exists('$(Civil3DReferencesPath)\AeccDbMgd.dll') Or !Exists('$(Civil3DReferencesPath)\AeccPressurePipesMgd.dll')"

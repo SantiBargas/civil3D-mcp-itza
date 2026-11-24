@@ -156,6 +156,8 @@ const CorridorTargetMappingSetArgsSchema = z.object({
     parameterName: z.string(),
     targetType: z.enum(["surface", "alignment", "profile", "polyline"]),
     targetName: z.string(),
+    // Optional: only subassemblies whose name contains this text (e.g. "Left"); omit to apply to all.
+    subassemblyName: z.string().optional(),
   })),
 });
 

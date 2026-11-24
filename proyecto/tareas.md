@@ -83,23 +83,73 @@ como tools que el agente invoca en lenguaje natural.
 - Sobre Civil 3D 2027: la IA incorporada «es malísima», no aporta nada.
 
 **Reunión con Joaco (2026-11-05)** — [`reuniones/2026-11-05/RESUMEN.md`](reuniones/2026-11-05/RESUMEN.md).
-Reunión semanal fija desde ahora. Tareas:
-- [ ] **Plan de trabajo / hoja de ruta** corto para seguir en las reuniones semanales.
-- [ ] **Versión:** analizar si se puede compilar compatible con 2026 (.NET 8) y 2027 (.NET 10); si
-  no, seguir en 2026 (ITZA ya migró) y pasar a 2027 al final.
-- [ ] **Estilos y presentación:** probar crear/editar estilos de objeto y etiqueta (colores, grosores),
-  guardarlos y exportarlos/importarlos entre dibujos; documentar qué se puede y qué no.
-- [ ] **Empaquetado de comandos:** definir la lista de comandos mínimos que sí o sí tienen que andar y
-  resolver los permisos (aprobación por paquete, `civil3d_batch` pendiente, reglas en `.claude/settings.json`).
-- [ ] **Manual de comandos** y alcances del MCP, por objeto.
-- [ ] **Validar los 3 objetos foco:** superficies (~1 día), corredores + ensamblajes/subensamblajes
-  (~1 semana; ¿los elige, selecciona o diseña?) y tuberías (relevar qué falta).
-- [ ] **Paso 2 (después):** PoC motor de cálculo → Civil 3D: SWMM → `civil3d_pipe`; luego HEC-RAS.
-  Idea de plataforma que integre motores + instalable del MCP.
-- [ ] **Organización:** repo central en GitHub de ITZA (web, app, MCP; espera cuenta de Joaco),
-  reunión con Pablo, contrato/resguardo del código en ITZA, reunión con Mino y Nacho (estructura legal).
+Reunión semanal fija desde ahora. Checklist (orden del [`plan-de-trabajo.md`](plan-de-trabajo.md)):
+
+- [x] **Plan de trabajo** para las reuniones semanales (11-16).
+- [x] **Automatizar el ciclo de Civil 3D** (11-16): [`scripts/civil3d.ps1`](../scripts/civil3d.ps1)
+  abre/cierra/recompila sin pasos a mano; el plugin carga solo desde el bundle (sin `NETLOAD`).
+
+**Semana 1 — Superficies** (11-16, dibujo `pruebas/superficies/superficies-semana1.dwg`)
+- [x] Importar puntos (PNEZD, grupo) y crear TIN — exacto (48 triángulos, 38.400 m²).
+- [x] Cotas en un punto, estadísticas, curvas de nivel (`extract_contours`, `contour_interval_set`).
+- [x] Línea de quiebre y límite exterior.
+- [x] Volúmenes (total, por región, reporte, comparación) — exactos al m³ contra cálculo a mano.
+- [x] Flujo de drenaje (recorrido del agua + caudal por método racional).
+- [x] Arreglar faltantes (probado en vivo 11-16, detalle en [`CAMBIOS_ITZA.md`](../CAMBIOS_ITZA.md)):
+  grupo de puntos, estilo, análisis de cotas/pendientes/orientación, etiquetas de superficie,
+  muestreo a lo largo y transecta, capa por defecto, texto del reporte. Cuencas: la API no las
+  calcula → error claro en vez de falso éxito.
+- [x] Superficie desde nube de puntos `.las` (sin API: se lee el archivo; filtra clases, ralea en
+  grilla). Probado con un `.las` sintético; falta uno real de ITZA (y LAZ no se lee).
+- [ ] Superficie desde DEM (`create_from_dem`): falta un archivo de prueba.
+- [x] Probar `drawing new` desde la pestaña «Inicio» — funciona (11-16).
+- [ ] **Versión:** decidido y hecho el 11-20: una DLL por versión (2026 .NET 8 + 2027 .NET 10) en un solo
+  bundle; probado en vivo en 2027 (barrido de tools OK, fix de redes). Falta: probar la DLL de 2026 tras
+  los cambios, `check_surface`/`check_alignment` en 2027, correr `build-kit.ps1` entero y actualizar la guía. Detalle en
+  [`CAMBIOS_ITZA.md`](../CAMBIOS_ITZA.md) (10-26, estado 11-20).
+
+**Semana 2 — Corredores**
+- [ ] Obra lineal completa sobre una calle real de ITZA. (11-20: armada de cero la «Calle 3B» del
+  loteo — eje, rasante, ensamblaje, corredor, superficies y volúmenes ✅; falta una calle real de ITZA.)
+- [x] Ensamblajes: **elige del catálogo** ✅ y **usa uno existente** ✅; **diseñar uno nuevo** sin
+  probar (no hay listado de catálogo ni import de `.pkt`). Detalle en [`CAMBIOS_ITZA.md`](../CAMBIOS_ITZA.md) 11-20.
+- [ ] Arreglar: `profile create_layout` (perfil vacío), `create_subassembly` ignora `subassemblyName`,
+  `assembly get` demasiado verboso.
+- [x] Probado 11-20: secciones (líneas + vistas) y `target_mapping` get/set.
+- [x] Arreglado 11-20: `get_section_data` (devolvía vacío) y `create_sample_lines` (faltaba la estación final y
+  fallaba un 2.º grupo por nombres duplicados). Probado en vivo.
+- [ ] `target_mapping_set` por lado (`subassemblyName`): plugin OK (`get` ya lo devuelve), pero falla el set: falta
+  declarar `subassemblyName` en los schemas de `targets` de `corridorDomain.ts` (~líneas 267 y 670; zod lo descarta).
+  Siguiente: agregarlo → `npm run build` → `/mcp` Reconnect → probar `Talud-Left` → `Calle 3 - Top` y verificar que
+  `Talud-Right` queda en `Terreno Natural`; revertir. Dibujo abierto: `corredores\calle3-semana2.dwg` (sin guardar, no se modificó nada).
+- [ ] `scripts/civil3d.ps1 -Compilar` aborta con «acad.exe sigue vivo» la primera vez (repetir anda).
+- [ ] Probar: regiones (`region_add`/`edit`), estilos del corredor.
+
+**Semana 3 — Comandos empaquetados**
+- [ ] Lista de comandos mínimos que sí o sí tienen que andar.
+- [ ] Una orden → una sola aprobación (`civil3d_batch` o aprobación por paquete).
+
+**Semana 4 — Estilos y presentación**
+- [ ] Crear/editar estilos de objeto y etiqueta (colores, grosores), guardarlos e importarlos.
+- [ ] Láminas (layouts).
+- [ ] Caso inverso: terminar (etiquetar) un dibujo hecho por ITZA.
+
+**Semana 5 — Tuberías + manual**
+- [ ] Red de tuberías sobre un caso real: relevar qué falta.
+- [ ] **Manual de comandos v1.**
+
+**Después**
+- [ ] PoC motor de cálculo → Civil 3D: SWMM → `civil3d_pipe`; luego HEC-RAS.
+- [ ] Plataforma que integre motores + instalable del MCP (idea).
+
+**Organización (Joaco)**
+- [ ] Repo central en GitHub de ITZA (espera cuenta de Joaco).
+- [ ] Reunión con Pablo.
+- [ ] Contrato / resguardo del código en ITZA.
+- [ ] Reunión con Mino y Nacho (estructura legal).
 
 **Qué hacer ahora:**
+00. **Acciones rotas (11-20):** ✅ `detention stage_storage` arreglada (área/volumen exactos desde el TIN, `seedPoint` opcional; 2026 y 2027). `grading criteria_list` arreglada (4 criterios del «Basic Set»). `grading group_create` **no es viable** por COM ni .NET (no existe `GradingGroup` en ninguna API; solo el diálogo `AeccCreateGradingGroup`), así que todo el dominio de grupos/gradings queda pendiente; ver `CAMBIOS_ITZA.md`, sección 10-26. Vitest: correr desde `C:\` en mayúscula (pasan 472/473; falla `security_boundary` por `LasReader.cs:40`).
 0. **Tareas de la reunión del 11-05** (arriba), empezando por plan de trabajo, versión y estilos.
 1. **Esperar el caso real de Joaco:** superficie de canales + generar una sección, con las
    secciones de referencia en PDFs viejos.

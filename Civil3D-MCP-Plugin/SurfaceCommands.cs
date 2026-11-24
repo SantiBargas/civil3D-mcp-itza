@@ -8,7 +8,7 @@ using CivilSurface = Autodesk.Civil.DatabaseServices.Surface;
 
 namespace Civil3DMcpPlugin;
 
-public static class SurfaceCommands
+public static partial class SurfaceCommands
 {
   public static Task<object?> ListSurfacesAsync()
   {
@@ -104,19 +104,63 @@ public static class SurfaceCommands
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "getSurfaceElevationsAlong requires 'points'.");
     }
 
+    var stepDistance = PluginRuntime.GetOptionalDouble(parameters, "stepDistance");
+    if (stepDistance is <= 0)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "getSurfaceElevationsAlong requires a positive stepDistance.");
+    }
+
+    var vertices = pointsNode.OfType<JsonObject>()
+      .Select(point => (X: point["x"]!.GetValue<double>(), Y: point["y"]!.GetValue<double>()))
+      .ToList();
+    var stations = new List<(double X, double Y, double Station)>();
+    var station = 0d;
+    for (var i = 0; i < vertices.Count; i++)
+    {
+      if (i == 0)
+      {
+        stations.Add((vertices[0].X, vertices[0].Y, 0d));
+        continue;
+      }
+
+      var (x0, y0) = vertices[i - 1];
+      var (x1, y1) = vertices[i];
+      var length = Math.Sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+      if (stepDistance is double step && length > step)
+      {
+        for (var d = step; d < length - 1e-9; d += step)
+        {
+          var t = d / length;
+          stations.Add((x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, station + d));
+        }
+      }
+
+      station += length;
+      stations.Add((x1, y1, station));
+    }
+
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var surface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, name, OpenMode.ForRead);
       var samples = new List<Dictionary<string, object?>>();
-      foreach (var point in pointsNode.OfType<JsonObject>())
+      foreach (var (x, y, distance) in stations)
       {
-        var x = point["x"]!.GetValue<double>();
-        var y = point["y"]!.GetValue<double>();
+        double? elevation;
+        try
+        {
+          elevation = InvokeSurfaceElevation(surface, x, y);
+        }
+        catch
+        {
+          elevation = null;
+        }
+
         samples.Add(new Dictionary<string, object?>
         {
           ["x"] = x,
           ["y"] = y,
-          ["elevation"] = InvokeSurfaceElevation(surface, x, y),
+          ["station"] = distance,
+          ["elevation"] = elevation,
         });
       }
 
@@ -162,11 +206,7 @@ public static class SurfaceCommands
       var styleId = LookupUtils.GetSurfaceStyleId(civilDoc, transaction, PluginRuntime.GetOptionalString(parameters, "style"));
       var surfaceId = CreateTinSurface(name, styleId);
       var surface = CivilObjectUtils.GetRequiredObject<CivilSurface>(transaction, surfaceId, OpenMode.ForWrite);
-      var layerName = PluginRuntime.GetOptionalString(parameters, "layer");
-      if (!string.IsNullOrWhiteSpace(layerName))
-      {
-        surface.Layer = layerName;
-      }
+      ApplySurfaceLayer(surface, PluginRuntime.GetOptionalString(parameters, "layer"), civilDoc, database, transaction);
 
       var description = PluginRuntime.GetOptionalString(parameters, "description");
       if (!string.IsNullOrWhiteSpace(description))
@@ -409,7 +449,10 @@ public static class SurfaceCommands
       if (format == "detailed")
       {
         lines.Add($"");
-        lines.Add($"Net Balance: {(net >= 0 ? "Cut exceeds fill" : "Fill exceeds cut")} by {Math.Abs(net):F3} {units}^3");
+        // Civil 3D's net volume is fill - cut: negative means surplus cut.
+        lines.Add(net == 0
+          ? "Net Balance: cut and fill are balanced"
+          : $"Net Balance: {(net < 0 ? "Cut exceeds fill" : "Fill exceeds cut")} by {Math.Abs(net):F3} {units}^3");
         lines.Add($"Cut/Fill Ratio: {(fill > 0 ? (cut / fill).ToString("F3") : "N/A")}");
       }
 
@@ -655,50 +698,17 @@ public static class SurfaceCommands
   public static Task<object?> AddSurfaceWatershedsAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
-    var depthThreshold = PluginRuntime.GetParameter(parameters, "depthThreshold") is JsonNode dt ? dt.GetValue<double>() : 0.1;
-    var mergeAdjacent = PluginRuntime.GetParameter(parameters, "mergeAdjacentWatersheds") is JsonNode ma && ma.GetValue<bool>();
 
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    // Verified in AeccDbMgd metadata (2026): SurfaceAnalysisWatershedDataCollection has no constructor
+    // or Add, and nothing on Surface/SurfaceAnalysis computes watersheds; only reading existing ones.
+    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
-      var surface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, name, OpenMode.ForWrite);
-
-      // Try to add watersheds via reflection
-      var watershedsAdded = false;
-      var watershedCount = 0;
-
-      foreach (var methodName in new[] { "AddWatersheds", "CreateWatersheds", "ComputeWatersheds" })
-      {
-        var result = CivilObjectUtils.InvokeMethod(surface, methodName, depthThreshold);
-        if (result != null)
-        {
-          watershedsAdded = true;
-          watershedCount = result is int count ? count : 1;
-          break;
-        }
-      }
-
-      if (!watershedsAdded)
-      {
-        // Try accessing the Watersheds property
-        var watershedsProperty = CivilObjectUtils.GetPropertyValue<object>(surface, "Watersheds");
-        if (watershedsProperty != null)
-        {
-          CivilObjectUtils.InvokeMethod(watershedsProperty, "Add", depthThreshold);
-          watershedsAdded = true;
-        }
-      }
-
-      RebuildSurfaceIfAvailable(surface);
-
-      return new Dictionary<string, object?>
-      {
-        ["surfaceName"] = name,
-        ["depthThreshold"] = depthThreshold,
-        ["mergeAdjacentWatersheds"] = mergeAdjacent,
-        ["watershedsAdded"] = watershedsAdded,
-        ["watershedCount"] = watershedCount,
-        ["status"] = watershedsAdded ? "Watershed analysis added successfully" : "Watershed analysis may require manual configuration in Civil 3D",
-      };
+      var surface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, name, OpenMode.ForRead);
+      var existing = surface.Analysis.GetWatershedData();
+      throw new JsonRpcDispatchException(
+        "CIVIL3D.NOT_SUPPORTED",
+        $"The Civil 3D .NET API cannot compute watersheds. Surface '{name}' currently has {existing.Count} watershed area(s) " +
+        "computed in Civil 3D (Surface Properties > Analysis > Watersheds). Use drainage_workflow for a flow path instead.");
     });
   }
 
@@ -939,7 +949,7 @@ public static class SurfaceCommands
         surface.Erase();
         throw new JsonRpcDispatchException("CIVIL3D.TRANSACTION_FAILED", $"Unable to import DEM file '{filePath}': {exception.Message}");
       }
-      if (!string.IsNullOrWhiteSpace(layer)) surface.Layer = layer;
+      ApplySurfaceLayer(surface, layer, civilDoc, database, transaction);
       if (!string.IsNullOrWhiteSpace(description)) surface.Description = description;
       surface.Rebuild();
 
@@ -1010,6 +1020,35 @@ public static class SurfaceCommands
     surface is TinSurface tinSurface ? tinSurface.GetTinProperties().NumberOfTriangles : null;
 
   private static ObjectId CreateTinSurface(string name, ObjectId styleId) => TinSurface.Create(name, styleId);
+
+  // TinSurface.Create puts the surface on the current layer (usually "0"); Civil 3D's own UI uses the
+  // drawing's object-layer setting for TIN surfaces instead.
+  private static void ApplySurfaceLayer(
+    CivilSurface surface,
+    string? requestedLayer,
+    Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
+    Database database,
+    Transaction transaction)
+  {
+    var layer = requestedLayer;
+    if (string.IsNullOrWhiteSpace(layer))
+    {
+      try
+      {
+        layer = civilDoc.Settings.DrawingSettings.ObjectLayerSettings
+          .GetObjectLayerSetting(Autodesk.Civil.Settings.SettingsObjectLayerType.TinSurface).LayerName;
+      }
+      catch
+      {
+        layer = null;
+      }
+    }
+
+    if (!string.IsNullOrWhiteSpace(layer))
+    {
+      CivilObjectUtils.TrySetLayer(surface, layer, database, transaction);
+    }
+  }
 
   private static Point3dCollection ParseRequiredPoint3dArray(JsonObject? parameters, string name, string errorMessage)
   {

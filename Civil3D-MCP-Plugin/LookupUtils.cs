@@ -149,6 +149,31 @@ public static class LookupUtils
     return null;
   }
 
+  // Unlike GetStyleId, never falls back to another style: a typo must not silently restyle objects.
+  public static ObjectId GetRequiredNamedStyleId(object collection, Transaction transaction, string styleName, string styleKind)
+  {
+    var available = new List<string>();
+    foreach (var objectId in EnumerateObjectIds(collection))
+    {
+      if (objectId == ObjectId.Null)
+      {
+        continue;
+      }
+
+      var name = CivilObjectUtils.GetName(transaction.GetObject(objectId, OpenMode.ForRead)) ?? string.Empty;
+      if (string.Equals(name, styleName, StringComparison.OrdinalIgnoreCase))
+      {
+        return objectId;
+      }
+
+      available.Add(name);
+    }
+
+    throw new JsonRpcDispatchException(
+      "CIVIL3D.OBJECT_NOT_FOUND",
+      $"{styleKind} '{styleName}' was not found. Available: {string.Join(", ", available)}.");
+  }
+
   private static ObjectId GetStyleId(object collection, Transaction transaction, string? styleName)
   {
     var fallback = ObjectId.Null;

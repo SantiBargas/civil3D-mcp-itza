@@ -149,32 +149,11 @@ public static class CivilExecution
     return result;
   }
 
-  public static async Task<T> ExecuteInCommandContextAsync<T>(Func<Task<T>> action)
+  // For work that needs no active document (e.g. DocumentManager.Add from the Start tab):
+  // ExecuteInCommandContextAsync never runs its callback when no drawing is open.
+  public static Task<T> RunInApplicationContextAsync<T>(Func<T> work)
   {
-    return await ExecuteSerializedAsync(async () =>
-    {
-      T? result = default;
-      Exception? capturedException = null;
-
-      await App.DocumentManager.ExecuteInCommandContextAsync(async _ =>
-      {
-        try
-        {
-          result = await action();
-        }
-        catch (Exception ex)
-        {
-          capturedException = ex;
-        }
-      }, null);
-
-      if (capturedException != null)
-      {
-        throw capturedException;
-      }
-
-      return result!;
-    });
+    return ExecuteSerializedAsync(() => RunOnIdleAsync(work));
   }
 
   public static Task<T> ReadAsync<T>(Func<Document, CivilDocument, Database, Transaction, T> action)

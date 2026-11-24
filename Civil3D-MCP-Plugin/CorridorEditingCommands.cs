@@ -103,10 +103,11 @@ public static class CorridorEditingCommands
           throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
             $"Target object '{targetName}' of type '{targetType}' was not found.");
 
-        var matched = ApplyTargetMapping(regionTargets, paramName!, targetId.Value);
+        var subassemblyFilter = t["subassemblyName"]?.GetValue<string>();
+        var matched = ApplyTargetMapping(regionTargets, paramName!, targetId.Value, subassemblyFilter);
         if (matched == 0)
           throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
-            $"No target named '{paramName}' in region {regionIndex}. Available: {string.Join(", ", DescribeTargets(regionTargets))}.");
+            $"No target named '{paramName}'{(string.IsNullOrWhiteSpace(subassemblyFilter) ? "" : $" for subassembly '{subassemblyFilter}'")} in region {regionIndex}. Available: {string.Join(", ", DescribeTargets(regionTargets))}.");
         appliedCount += matched;
       }
 
@@ -620,11 +621,14 @@ public static class CorridorEditingCommands
 
   // Matches by logical name, display name or subassembly name; a logical name such as
   // the daylight surface is shared by both sides, so one entry may update several targets.
-  private static int ApplyTargetMapping(SubassemblyTargetInfoCollection targets, string paramName, ObjectId targetId)
+  private static int ApplyTargetMapping(SubassemblyTargetInfoCollection targets, string paramName, ObjectId targetId, string? subassemblyFilter = null)
   {
     var matched = 0;
     foreach (SubassemblyTargetInfo info in targets)
     {
+      if (!string.IsNullOrWhiteSpace(subassemblyFilter)
+        && info.SubassemblyName.IndexOf(subassemblyFilter, StringComparison.OrdinalIgnoreCase) < 0)
+        continue;
       if (!string.Equals(info.LogicalName, paramName, StringComparison.OrdinalIgnoreCase)
         && !string.Equals(info.DisplayName, paramName, StringComparison.OrdinalIgnoreCase)
         && !string.Equals(info.SubassemblyName, paramName, StringComparison.OrdinalIgnoreCase))

@@ -18,14 +18,25 @@ if (Test-Path $kitRoot) {
 }
 New-Item -ItemType Directory -Force $contentsDir | Out-Null
 
-& dotnet build (Join-Path $repoRoot "Civil3D-MCP-Plugin\Civil3DMcpPlugin.csproj") -c Release -o $pluginBuildDir
-if ($LASTEXITCODE -ne 0) {
-  throw "dotnet build failed."
+# One plugin DLL per Civil 3D version: 2026 = .NET 8 against C_References, 2027 = .NET 10 against C_References\2027.
+$targets = @(
+  @{ Year = "2026"; Tfm = "net8.0-windows";  Refs = Join-Path $repoRoot "C_References" },
+  @{ Year = "2027"; Tfm = "net10.0-windows"; Refs = Join-Path $repoRoot "C_References\2027" }
+)
+foreach ($t in $targets) {
+  $outDir = Join-Path $pluginBuildDir $t.Year
+  $yearContents = Join-Path $contentsDir $t.Year
+  New-Item -ItemType Directory -Force $yearContents | Out-Null
+  & dotnet build (Join-Path $repoRoot "Civil3D-MCP-Plugin\Civil3DMcpPlugin.csproj") -c Release `
+    -p:PluginTfm=$($t.Tfm) -p:Civil3DReferencesPath=$($t.Refs) -p:BaseIntermediateOutputPath=../obj-$($t.Year)/ -o $outDir
+  if ($LASTEXITCODE -ne 0) {
+    throw "dotnet build failed for Civil 3D $($t.Year)."
+  }
+  foreach ($file in @("Civil3DMcpPlugin.dll", "Civil3DMcpPlugin.deps.json", "Civil3DMcpPlugin.runtimeconfig.json")) {
+    Copy-Item (Join-Path $outDir $file) $yearContents
+  }
 }
-foreach ($file in @("Civil3DMcpPlugin.dll", "Civil3DMcpPlugin.deps.json", "Civil3DMcpPlugin.runtimeconfig.json")) {
-  Copy-Item (Join-Path $pluginBuildDir $file) $contentsDir
-}
-$autodeskDlls = Get-ChildItem $contentsDir -Filter "*.dll" | Where-Object { $_.Name -ne "Civil3DMcpPlugin.dll" }
+$autodeskDlls = Get-ChildItem $contentsDir -Recurse -Filter "*.dll" | Where-Object { $_.Name -ne "Civil3DMcpPlugin.dll" }
 if ($autodeskDlls) {
   throw "Unexpected DLLs in the bundle (Autodesk assemblies must not be redistributed): $($autodeskDlls.Name -join ', ')"
 }

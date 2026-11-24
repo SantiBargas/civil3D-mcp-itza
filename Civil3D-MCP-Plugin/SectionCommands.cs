@@ -81,10 +81,13 @@ public static class SectionCommands
       }
       else if (interval.HasValue && interval.Value > 0)
       {
-        for (var station = alignment.StartingStation; station <= alignment.EndingStation; station += interval.Value)
+        var start = alignment.StartingStation;
+        var end = alignment.EndingStation;
+        for (var i = 0; start + i * interval.Value < end - 0.0001; i++)
         {
-          stations.Add(station);
+          stations.Add(start + i * interval.Value);
         }
+        stations.Add(end);
       }
       else
       {
@@ -105,7 +108,7 @@ public static class SectionCommands
           new(x1, y1),
           new(x2, y2),
         };
-        SampleLine.Create($"SL-{station:0.##}", groupId, points);
+        SampleLine.Create($"{groupName} {station:0.##}", groupId, points);
         createdStations.Add(station);
       }
 
@@ -124,6 +127,7 @@ public static class SectionCommands
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
     var sampleLineGroupName = PluginRuntime.GetRequiredString(parameters, "sampleLineGroupName");
     var station = PluginRuntime.GetRequiredDouble(parameters, "station");
+    var requestedSurfaces = (PluginRuntime.GetParameter(parameters, "surfaces") as JsonArray)?.Select(node => node?.GetValue<string>()).Where(value => !string.IsNullOrWhiteSpace(value)).Cast<string>().ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -152,10 +156,33 @@ public static class SectionCommands
           throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Sample line at station {station} was not found.");
         }
 
+        var surfaces = new List<object>();
+        foreach (ObjectId sectionId in sampleLine.GetSectionIds())
+        {
+          var section = CivilObjectUtils.GetRequiredObject<Autodesk.Civil.DatabaseServices.Section>(transaction, sectionId, OpenMode.ForRead);
+          var sourceName = section.SourceName;
+          if (requestedSurfaces.Count > 0 && !requestedSurfaces.Contains(sourceName)) continue;
+
+          var offsets = new List<double>();
+          var elevations = new List<double>();
+          foreach (SectionPoint point in section.SectionPoints)
+          {
+            offsets.Add(point.Location.X);
+            elevations.Add(point.Location.Y);
+          }
+
+          surfaces.Add(new Dictionary<string, object?>
+          {
+            ["surfaceName"] = sourceName,
+            ["offsets"] = offsets,
+            ["elevations"] = elevations,
+          });
+        }
+
         return new Dictionary<string, object?>
         {
           ["station"] = sampleLine.Station,
-          ["surfaces"] = new List<object>(),
+          ["surfaces"] = surfaces,
           ["units"] = new Dictionary<string, object?>
           {
             ["horizontal"] = CivilObjectUtils.LinearUnits(database),

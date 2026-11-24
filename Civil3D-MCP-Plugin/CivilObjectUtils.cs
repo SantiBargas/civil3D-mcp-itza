@@ -50,6 +50,27 @@ public static class CivilObjectUtils
     return Civil3DCompatibility.GetPropertyValue<T>(value, propertyName);
   }
 
+  // Triangles live in GetTinProperties(), not in GetGeneralProperties().
+  public static int GetSurfaceTriangleCount(object? surface)
+  {
+    var tinProperties = InvokeMethod(surface, "GetTinProperties");
+    return GetPropertyValue<int?>(tinProperties, "NumberOfTriangles") ?? 0;
+  }
+
+  // The reflected "Length" of an alignment entity comes back empty; stations are always set.
+  public static double GetEntityLength(object? entity)
+  {
+    var length = GetPropertyValue<double?>(entity, "Length") ?? 0;
+    if (length > 0)
+    {
+      return length;
+    }
+
+    var start = GetPropertyValue<double?>(entity, "StartStation") ?? 0;
+    var end = GetPropertyValue<double?>(entity, "EndStation") ?? 0;
+    return Math.Max(0, end - start);
+  }
+
   public static object? InvokeMethod(object? value, string methodName, params object?[] arguments)
   {
     if (value == null)

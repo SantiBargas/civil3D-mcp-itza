@@ -6,6 +6,7 @@ dist/
 # Build artifacts
 **/bin/
 **/obj/
+obj-*/
 *.dll
 *.pdb
 

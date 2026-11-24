@@ -30,7 +30,11 @@ public static class GradingCommands
         .Select(g => ToGradingGroupSummary(g, transaction))
         .ToList();
 
-      return new Dictionary<string, object?> { ["groups"] = groups };
+      return new Dictionary<string, object?>
+      {
+        ["groups"] = groups,
+        ["note"] = "Civil 3D exposes no grading-group collection to the .NET/COM API, so this list can be empty even when the drawing has groups.",
+      };
     });
   }
 
@@ -53,50 +57,17 @@ public static class GradingCommands
   // createGradingGroup
   // -------------------------------------------------------------------------
 
+  // Checked 11-20 against AeccDbMgd (2026 and 2027) and Autodesk.AECC.Interop.*: there is no managed or COM
+  // GradingGroup (Site has no GradingGroups; Interop.Land only has grading styles and command settings).
+  // The only creation path is the interactive AeccCreateGradingGroup command.
   public static Task<object?> CreateGradingGroupAsync(JsonObject? parameters)
   {
-    var name = PluginRuntime.GetRequiredString(parameters, "name");
-    var description = PluginRuntime.GetOptionalString(parameters, "description") ?? string.Empty;
-    var useProjection = PluginRuntime.GetOptionalBool(parameters, "useProjection") ?? false;
-
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var siteIds = civilDoc.GetSiteIds().Cast<ObjectId>();
-      var firstSiteId = siteIds.FirstOrDefault();
-
-      if (firstSiteId == ObjectId.Null)
-      {
-        throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", "No site found in the drawing. Create a site first before adding a grading group.");
-      }
-
-      var siteObj = transaction.GetObject(firstSiteId, OpenMode.ForRead);
-      var gradingGroups = Civil3DCompatibility.GetPropertyValue(siteObj, "GradingGroups");
-
-      // Try Add(name, useProjection) or Add(name)
-      object? newGroupId = null;
-      if (!Civil3DCompatibility.TryInvokeMethod(gradingGroups, "Add", out newGroupId, name, useProjection))
-        Civil3DCompatibility.TryInvokeMethod(gradingGroups, "Add", out newGroupId, name);
-
-      if (newGroupId == null)
-      {
-        throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "Failed to create grading group — Add method not found.");
-      }
-
-      var newGroupObjectId = (ObjectId)newGroupId;
-      var newGroup = transaction.GetObject(newGroupObjectId, OpenMode.ForWrite);
-
-      Civil3DCompatibility.TrySetProperty(newGroup, "Description", description);
-
-      return new Dictionary<string, object?>
-      {
-        ["name"] = name,
-        ["handle"] = CivilObjectUtils.GetHandle(newGroup),
-        ["description"] = description,
-        ["created"] = true,
-      };
-    });
+    PluginRuntime.GetRequiredString(parameters, "name");
+    throw new JsonRpcDispatchException(
+      "CIVIL3D.API_ERROR",
+      "Grading groups cannot be created through the Civil 3D .NET or COM API (neither exposes a GradingGroup type; " +
+      "the only way is the interactive AeccCreateGradingGroup dialog). Create the group in Civil 3D and use criteria_list / feature_line_* from here.");
   }
-
   // -------------------------------------------------------------------------
   // deleteGradingGroup
   // -------------------------------------------------------------------------
@@ -298,30 +269,16 @@ public static class GradingCommands
     {
       var criteriaList = new List<Dictionary<string, object?>>();
 
-      // Try GradingCriteriaSets property path
-      var criteriaSets = Civil3DCompatibility.GetPropertyValue(civilDoc, "GradingCriteriaSets");
-
-      foreach (var setId in CivilObjectUtils.ToObjectIds(criteriaSets))
+      foreach (var (setName, criteriaId, criteriaObj) in EnumerateGradingCriteria(civilDoc, transaction))
       {
-        var setObj = transaction.GetObject(setId, OpenMode.ForRead);
-        var setName = CivilObjectUtils.GetName(setObj) ?? string.Empty;
-
-        var criteriaIds = Civil3DCompatibility.GetPropertyValue(setObj, "CriteriaIds")
-          ?? Civil3DCompatibility.GetPropertyValue(setObj, "Criteria");
-
-        foreach (var criteriaId in CivilObjectUtils.ToObjectIds(criteriaIds))
+        criteriaList.Add(new Dictionary<string, object?>
         {
-          var criteriaObj = transaction.GetObject(criteriaId, OpenMode.ForRead);
-          criteriaList.Add(new Dictionary<string, object?>
-          {
-            ["setName"] = setName,
-            ["name"] = CivilObjectUtils.GetName(criteriaObj),
-            ["handle"] = CivilObjectUtils.GetHandle(criteriaObj),
-            ["description"] = CivilObjectUtils.GetStringProperty(criteriaObj, "Description"),
-          });
-        }
+          ["setName"] = setName,
+          ["name"] = CivilObjectUtils.GetName(criteriaObj),
+          ["handle"] = CivilObjectUtils.GetHandle(criteriaObj),
+          ["description"] = CivilObjectUtils.GetStringProperty(criteriaObj, "Description"),
+        });
       }
-
       return new Dictionary<string, object?> { ["criteriaList"] = criteriaList };
     });
   }
@@ -586,29 +543,32 @@ public static class GradingCommands
     return null;
   }
 
+  // Criteria live in civilDoc.Styles.GradingCriteriaSets (StylesRoot); a set lists its criteria with GradingCriteriaIds().
+  private static IEnumerable<(string SetName, ObjectId CriteriaId, DBObject Criteria)> EnumerateGradingCriteria(
+    Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
+    Transaction transaction)
+  {
+    foreach (ObjectId setId in civilDoc.Styles.GradingCriteriaSets)
+    {
+      var set = (Autodesk.Civil.DatabaseServices.Styles.GradingCriteriaSet)transaction.GetObject(setId, OpenMode.ForRead);
+      foreach (ObjectId criteriaId in set.GradingCriteriaIds())
+      {
+        yield return (set.Name, criteriaId, transaction.GetObject(criteriaId, OpenMode.ForRead));
+      }
+    }
+  }
   private static ObjectId FindGradingCriteriaId(
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
     Transaction transaction,
     string criteriaName)
   {
-    var criteriaSets = Civil3DCompatibility.GetPropertyValue(civilDoc, "GradingCriteriaSets");
-
-    foreach (var setId in CivilObjectUtils.ToObjectIds(criteriaSets))
+    foreach (var (_, criteriaId, criteriaObj) in EnumerateGradingCriteria(civilDoc, transaction))
     {
-      var setObj = transaction.GetObject(setId, OpenMode.ForRead);
-      var criteriaIds = Civil3DCompatibility.GetPropertyValue(setObj, "CriteriaIds")
-        ?? Civil3DCompatibility.GetPropertyValue(setObj, "Criteria");
-
-      foreach (var criteriaId in CivilObjectUtils.ToObjectIds(criteriaIds))
+      if (string.Equals(CivilObjectUtils.GetName(criteriaObj), criteriaName, StringComparison.OrdinalIgnoreCase))
       {
-        var criteriaObj = transaction.GetObject(criteriaId, OpenMode.ForRead);
-        if (string.Equals(CivilObjectUtils.GetName(criteriaObj), criteriaName, StringComparison.OrdinalIgnoreCase))
-        {
-          return criteriaId;
-        }
+        return criteriaId;
       }
     }
-
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Grading criteria '{criteriaName}' not found.");
   }
 

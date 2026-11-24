@@ -5,6 +5,7 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
 const JobOperationSchema = z.enum([
   "publish_sheet_pdf",
   "surface_dem_import",
+  "surface_las_import",
   "bulk_qc_report",
 ]);
 

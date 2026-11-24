@@ -10,6 +10,7 @@ public static class JobCommands
     {
       ["publish_sheet_pdf"] = "publishSheetPdf",
       ["surface_dem_import"] = "createSurfaceFromDem",
+      ["surface_las_import"] = "createSurfaceFromLas",
       ["bulk_qc_report"] = "qcReportGenerate",
     };
 

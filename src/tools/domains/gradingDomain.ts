@@ -47,6 +47,8 @@ const canonicalGradingInputShape = {
     "create",
     "delete",
     "criteria_list",
+    "criteria_set_create",
+    "criteria_create",
     "feature_line_list",
     "feature_line_get",
     "feature_line_export_as_polyline",
@@ -64,6 +66,20 @@ const canonicalGradingInputShape = {
   targetLayer: z.string().optional(),
   points: z.array(Point3DSchema).optional(),
   layer: z.string().optional(),
+  setName: z.string().optional(),
+  target: z.enum(["surface", "elevation", "relative_elevation", "distance"]).optional(),
+  projection: z.enum(["cut_fill_slope", "cut_slope", "fill_slope", "slope", "distance", "relative_elevation"]).optional(),
+  slopeFormat: z.enum(["slope", "grade"]).optional(),
+  searchOrder: z.enum(["cut_first", "fill_first"]).optional(),
+  interiorCornerOverlap: z.enum(["use_average_slope", "hold_slope_as_minimum", "hold_slope_as_maximum"]).optional(),
+  cutSlope: z.number().optional(),
+  fillSlope: z.number().optional(),
+  slope: z.number().optional(),
+  elevation: z.number().optional(),
+  relativeElevation: z.number().optional(),
+  distance: z.number().optional(),
+  projectionDistance: z.number().optional(),
+  projectionRelativeElevation: z.number().optional(),
 };
 
 const GradingGroupListArgsSchema = z.object({
@@ -125,6 +141,30 @@ const GradingDeleteArgsSchema = z.object({
 
 const GradingCriteriaListArgsSchema = z.object({
   action: z.literal("criteria_list"),
+});
+
+const GradingCriteriaSetCreateArgsSchema = z.object({
+  action: z.literal("criteria_set_create"),
+  name: z.string().min(1),
+});
+
+const GradingCriteriaCreateArgsSchema = z.object({
+  action: z.literal("criteria_create"),
+  setName: z.string().min(1),
+  name: z.string().min(1),
+  target: z.enum(["surface", "elevation", "relative_elevation", "distance"]),
+  projection: z.enum(["cut_fill_slope", "cut_slope", "fill_slope", "slope", "distance", "relative_elevation"]).optional(),
+  slopeFormat: z.enum(["slope", "grade"]).optional(),
+  searchOrder: z.enum(["cut_first", "fill_first"]).optional(),
+  interiorCornerOverlap: z.enum(["use_average_slope", "hold_slope_as_minimum", "hold_slope_as_maximum"]).optional(),
+  cutSlope: z.number().optional(),
+  fillSlope: z.number().optional(),
+  slope: z.number().optional(),
+  elevation: z.number().optional(),
+  relativeElevation: z.number().optional(),
+  distance: z.number().optional(),
+  projectionDistance: z.number().optional(),
+  projectionRelativeElevation: z.number().optional(),
 });
 
 const FeatureLineListArgsSchema = z.object({
@@ -302,6 +342,46 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("listGradingCriteria", {}),
       ),
     },
+    criteria_set_create: {
+      action: "criteria_set_create",
+      inputSchema: GradingCriteriaSetCreateArgsSchema,
+      responseSchema: GenericGradingResponseSchema,
+      capabilities: ["create"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["createGradingCriteriaSet"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("createGradingCriteriaSet", { name: args.name }),
+      ),
+    },
+    criteria_create: {
+      action: "criteria_create",
+      inputSchema: GradingCriteriaCreateArgsSchema,
+      responseSchema: GenericGradingResponseSchema,
+      capabilities: ["create"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["createGradingCriteria"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("createGradingCriteria", {
+          setName: args.setName,
+          name: args.name,
+          target: args.target,
+          projection: args.projection ?? null,
+          slopeFormat: args.slopeFormat ?? null,
+          searchOrder: args.searchOrder ?? null,
+          interiorCornerOverlap: args.interiorCornerOverlap ?? null,
+          cutSlope: args.cutSlope ?? null,
+          fillSlope: args.fillSlope ?? null,
+          slope: args.slope ?? null,
+          elevation: args.elevation ?? null,
+          relativeElevation: args.relativeElevation ?? null,
+          distance: args.distance ?? null,
+          projectionDistance: args.projectionDistance ?? null,
+          projectionRelativeElevation: args.projectionRelativeElevation ?? null,
+        }),
+      ),
+    },
     feature_line_list: {
       action: "feature_line_list",
       inputSchema: FeatureLineListArgsSchema,
@@ -376,6 +456,8 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
         "create",
         "delete",
         "criteria_list",
+        "criteria_set_create",
+        "criteria_create",
         "feature_line_list",
         "feature_line_get",
         "feature_line_export_as_polyline",

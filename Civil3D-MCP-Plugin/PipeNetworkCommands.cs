@@ -585,7 +585,7 @@ public static class PipeNetworkCommands
       ["handle"] = CivilObjectUtils.GetHandle(network),
       ["pipeCount"] = network.GetPipeIds().Count,
       ["structureCount"] = network.GetStructureIds().Count,
-      ["surface"] = ResolveObjectName(transaction, network.ReferenceSurfaceId),
+      ["surface"] = ResolveObjectName(transaction, SafeObjectId(() => network.ReferenceSurfaceId)),
     };
   }
 
@@ -602,13 +602,26 @@ public static class PipeNetworkCommands
     {
       ["name"] = network.Name,
       ["handle"] = CivilObjectUtils.GetHandle(network),
-      ["partsList"] = ResolveObjectName(transaction, network.PartsListId),
-      ["style"] = network.StyleName,
-      ["referenceSurface"] = ResolveObjectName(transaction, network.ReferenceSurfaceId),
-      ["referenceAlignment"] = ResolveObjectName(transaction, network.ReferenceAlignmentId),
+      ["partsList"] = ResolveObjectName(transaction, SafeObjectId(() => network.PartsListId)),
+      ["style"] = SafeStyleName(network),
+      ["referenceSurface"] = ResolveObjectName(transaction, SafeObjectId(() => network.ReferenceSurfaceId)),
+      ["referenceAlignment"] = ResolveObjectName(transaction, SafeObjectId(() => network.ReferenceAlignmentId)),
       ["pipes"] = pipes,
       ["structures"] = structures,
     };
+  }
+
+  // Civil 3D 2027 throws "Retrieve attribute failed" when the network has no style attribute.
+  private static ObjectId SafeObjectId(Func<ObjectId> read)
+  {
+    try { return read(); }
+    catch (Autodesk.Civil.CivilException) { return ObjectId.Null; }
+  }
+
+  private static string? SafeStyleName(Network network)
+  {
+    try { return network.StyleName; }
+    catch (Autodesk.Civil.CivilException) { return null; }
   }
 
   private static Dictionary<string, object?> ToPipeData(Pipe pipe, Transaction transaction)

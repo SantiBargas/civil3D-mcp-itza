@@ -26,8 +26,8 @@ and Civil 3D plugin installation.
 |---|---|---|
 | Node.js | 18 or later | Required to run the MCP server |
 | npm | 8 or later | Comes with Node.js |
-| Autodesk Civil 3D | 2026 | Supported and live-validated plugin host |
-| .NET 8 SDK | 8.0 | Required to build the C# plugin |
+| Autodesk Civil 3D | 2026 or 2027 | Supported and live-validated plugin hosts (one plugin DLL per version) |
+| .NET SDK | 8.0 and 10.0 | Required to build the C# plugin (8 for Civil 3D 2026, 10 for Civil 3D 2027) |
 | Docker (optional) | 20+ | Only needed for container deployment |
 
 ---
@@ -201,22 +201,43 @@ The C# plugin (`Civil3D-MCP-Plugin/`) runs inside Civil 3D and acts as the bridg
 
 ### Build the plugin
 
+Each Civil 3D version needs its own DLL, compiled against that version's Autodesk
+assemblies. Civil 3D 2026 runs on .NET 8 and Civil 3D 2027 on .NET 10, so the
+`PluginTfm` property selects the target framework (default `net8.0-windows`).
+
 ```powershell
-# Requires .NET 8 SDK and licensed Civil 3D 2026 managed references
-cd Civil3D-MCP-Plugin
-dotnet build -c Release /p:Civil3DReferencesPath="C:\Program Files\Autodesk\AutoCAD 2026\C3D"
+# Civil 3D 2026 — .NET 8 SDK, references in C_References\
+dotnet build Civil3D-MCP-Plugin\Civil3DMcpPlugin.csproj -c Release
+
+# Civil 3D 2027 — .NET 10 SDK, references in C_References\2027\
+# Separate intermediate folder so it does not clash with the .NET 8 build.
+dotnet build Civil3D-MCP-Plugin\Civil3DMcpPlugin.csproj -c Release `
+  -p:PluginTfm=net10.0-windows -p:Civil3DReferencesPath=..\C_References\2027 `
+  -p:BaseIntermediateOutputPath=..\obj-net10\
 ```
 
-The output DLL is in `Civil3D-MCP-Plugin/bin/Release/net8.0-windows/`.
+The 2026 DLL is in `Civil3D-MCP-Plugin/bin/Release/net8.0-windows/`; for 2027 pass
+`-o <folder>` to choose the output. `scripts/build-kit.ps1` builds both and packages
+them (run it from bash: `powershell.exe -File scripts/build-kit.ps1`).
 
 ### Load into Civil 3D
 
+Recommended: install the autoload bundle `CivilMcpItza.bundle` in
+`%APPDATA%\Autodesk\ApplicationPlugins\`. Its `PackageContents.xml` has one component
+per version (`Contents\2026\` for series R25.1, `Contents\2027\` for series R26.0), so
+Civil 3D loads the right DLL by itself. Only one Civil 3D with the plugin can be open at
+a time (both listen on port 8080).
+
+Civil 3D shows an "unsigned executable" prompt for the DLL. Choose **Load always**, or add
+the bundle's `Contents\2026` / `Contents\2027` folders to the `TRUSTEDPATHS` system
+variable (per profile; `scripts/civil3d.ps1` does it for 2026).
+
+Manual loading:
+
 1. Open Autodesk Civil 3D.
 2. At the command prompt, type `NETLOAD` and press Enter.
-3. Browse to `Civil3D-MCP-Plugin/bin/Release/net8.0-windows/Civil3DMcpPlugin.dll`.
+3. Browse to the `Civil3DMcpPlugin.dll` that matches your Civil 3D version.
 4. Click **Open**. The plugin registers its RPC server and starts listening.
-
-> **Auto-load on startup:** Add the plugin to the `APPLOAD` startup suite (Tools → Load Application → Startup Suite) so it loads automatically when Civil 3D opens.
 
 ### Civil 3D reference DLLs
 
@@ -234,7 +255,12 @@ C_References/
 └── AeccPressurePipesMgd.dll
 ```
 
-Use assemblies from the matching Civil 3D 2026 installation or licensed SDK.
+Use assemblies from the matching Civil 3D installation or licensed SDK. Keep one
+folder per version: `C_References/` for 2026 and `C_References/2027/` for 2027.
+The six DLLs are spread over three folders of the installation (same names in both
+versions): `accoremgd.dll`, `AcDbMgd.dll` and `Acmgd.dll` in the root
+(`C:\Program Files\Autodesk\AutoCAD <year>\`), `AecBaseMgd.dll` in `ACA\`, and
+`AeccDbMgd.dll` and `AeccPressurePipesMgd.dll` in `C3D\`.
 
 ---
 

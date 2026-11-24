@@ -43,7 +43,7 @@ public static class QcCommands
             if (entity == null) { index++; continue; }
 
             var entityType = CivilObjectUtils.GetStringProperty(entity, "EntityType") ?? entity.GetType().Name;
-            var length = CivilObjectUtils.GetPropertyValue<double?>(entity, "Length") ?? 0;
+            var length = CivilObjectUtils.GetEntityLength(entity);
             var startStation = CivilObjectUtils.GetPropertyValue<double?>(entity, "StartStation") ?? 0;
             var endStation = CivilObjectUtils.GetPropertyValue<double?>(entity, "EndStation") ?? 0;
             var isTangent = entityType.IndexOf("tangent", StringComparison.OrdinalIgnoreCase) >= 0
@@ -541,7 +541,7 @@ public static class QcCommands
         var minElevation = CivilObjectUtils.GetPropertyValue<double?>(generalProperties, "MinimumElevation") ?? 0;
         var maxElevation = CivilObjectUtils.GetPropertyValue<double?>(generalProperties, "MaximumElevation") ?? 0;
         var numberOfPoints = CivilObjectUtils.GetPropertyValue<int?>(generalProperties, "NumberOfPoints") ?? 0;
-        var numberOfTriangles = CivilObjectUtils.GetPropertyValue<int?>(generalProperties, "NumberOfTriangles") ?? 0;
+        var numberOfTriangles = CivilObjectUtils.GetSurfaceTriangleCount(surface);
 
         var elevationRange = maxElevation - minElevation;
         if (elevationRange > spikeThreshold * 10)
@@ -788,7 +788,7 @@ public static class QcCommands
               foreach (var entity in enumerable)
               {
                 if (entity == null) { index++; continue; }
-                var length = CivilObjectUtils.GetPropertyValue<double?>(entity, "Length") ?? 0;
+                var length = CivilObjectUtils.GetEntityLength(entity);
                 if (length <= 0)
                 {
                   sb.AppendLine($"  [WARN] {alignment.Name} entity[{index}]: zero/negative length");
@@ -815,7 +815,7 @@ public static class QcCommands
             var surface = CivilObjectUtils.GetRequiredObject<CivilSurface>(transaction, surfId, OpenMode.ForRead);
             var gp = CivilObjectUtils.InvokeMethod(surface, "GetGeneralProperties");
             var npts = CivilObjectUtils.GetPropertyValue<int?>(gp, "NumberOfPoints") ?? 0;
-            var ntri = CivilObjectUtils.GetPropertyValue<int?>(gp, "NumberOfTriangles") ?? 0;
+            var ntri = CivilObjectUtils.GetSurfaceTriangleCount(surface);
             if (npts == 0)
             {
               sb.AppendLine($"  [ERROR] {surface.Name}: no data points");

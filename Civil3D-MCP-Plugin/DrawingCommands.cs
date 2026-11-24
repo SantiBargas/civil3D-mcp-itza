@@ -134,19 +134,19 @@ public static class DrawingCommands
       templatePath = FileBoundary.ResolveImportPath(templatePath, ".dwt", ".dwg");
     }
 
-    return await CivilExecution.ExecuteInCommandContextAsync<object?>(() =>
+    return await CivilExecution.RunInApplicationContextAsync<object?>(() =>
     {
       var createdDocument = string.IsNullOrWhiteSpace(templatePath)
         ? App.DocumentManager.Add(string.Empty)
         : App.DocumentManager.Add(templatePath);
 
       App.DocumentManager.MdiActiveDocument = createdDocument;
-      return Task.FromResult<object?>(new Dictionary<string, object?>
+      return new Dictionary<string, object?>
       {
         ["drawingName"] = createdDocument.Name,
         ["filePath"] = createdDocument.Database.Filename,
         ["templatePath"] = templatePath,
-      });
+      };
     });
   }
 

@@ -42,6 +42,7 @@ const SectionGetDataArgsSchema = z.object({
   alignmentName: z.string(),
   sampleLineGroupName: z.string(),
   station: z.number(),
+  surfaces: z.array(z.string()).optional(),
 });
 
 const SectionCreateSampleLinesArgsSchema = z.object({
@@ -179,6 +180,7 @@ export const SECTION_DOMAIN_DEFINITION: DomainToolDefinition = {
           alignmentName: args.alignmentName,
           sampleLineGroupName: args.sampleLineGroupName,
           station: args.station,
+          surfaces: args.surfaces,
         }),
       ),
     },

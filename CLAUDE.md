@@ -57,8 +57,9 @@ contribuya activamente — se trata como que lo mantiene ITZA, cualquier aporte 
   usando una carpeta local `C_References\` armada a mano con 6 DLL de Civil 3D repartidas en 3
   carpetas distintas de la instalación (no se commitea, es local — ver detalle exacto en el doc
   principal, sección 8).
-- Se carga en Civil 3D con `NETLOAD` (no hay bundle de auto-carga — hay que repetirlo cada sesión,
-  o configurar el Startup Suite de `APPLOAD`).
+- Se carga solo al abrir Civil 3D desde el bundle de autocarga
+  `%APPDATA%\Autodesk\ApplicationPlugins\CivilMcpItza.bundle` (no hace falta `NETLOAD`; ojo: el bundle
+  tiene una **copia** de la DLL, que `scripts\civil3d.ps1 -Compilar` actualiza).
 - Registrado en Claude Code con `claude mcp add --scope user --transport stdio civil3d-mcp -- ...`
   (scope `user` = config global, disponible en cualquier sesión de Claude Code, no solo acá).
 
@@ -75,13 +76,11 @@ fuente de verdad del estado de fixes y bugs abiertos — no duplicarlo acá.
   y reenvía al plugin). Una acción nueva necesita las dos: handler C# + ruta en
   `CommandDispatcher.cs`, y acción en `src/tools/domains/<dominio>Domain.ts` (`pluginMethods` +
   `sendCommand` con el mismo nombre de método).
-- **Compilar plugin:** `dotnet build .\Civil3D-MCP-Plugin\Civil3DMcpPlugin.csproj -c Release`.
-  **Civil 3D tiene que estar cerrado** — si no, compila pero falla la copia a `bin\` por lock
-  (`acad.exe` a veces queda vivo sin ventana: revisar el Administrador de tareas).
-- **Cargar:** en Civil 3D, `NETLOAD` con la **ruta absoluta**
-  `C:\Users\santi\Documents\GitHub\civil3D-mcp-itza\Civil3D-MCP-Plugin\bin\Release\net8.0-windows\Civil3DMcpPlugin.dll`
-  (cada sesión de Civil 3D).
-- **Servidor TS:** `npm run build`; tests `npx vitest run`. Después de cambiar `src/`, reconectar
+- **Abrir / cerrar / recompilar Civil 3D: lo hace Claude con [`scripts/civil3d.ps1`](scripts/civil3d.ps1)**
+  (no pedirle a Santi pasos a mano): `-Abrir [-Dibujo x.dwg]`, `-Cerrar`, `-Compilar [-Ts] [-Abrir]`
+  (cierra, compila, copia al bundle, reabre y espera al plugin). Detalle en `CAMBIOS_ITZA.md` 11-16.
+- **Servidor TS:** `npm run build`; tests `npx vitest run` (**desde un shell con la ruta `C:\...` en
+  mayúscula**; con `c:` minúscula vitest falla en todos los archivos con «reading 'config'»). Después de cambiar `src/`, reconectar
   el MCP en Claude Code (`/mcp` → civil3d-mcp → Reconnect) para que tome el schema nuevo.
 - **Probar en dibujo métrico** (`_Autodesk Civil 3D (Metric) NCS.dwt`) — la plantilla por defecto
   es Imperial (pies).
@@ -105,16 +104,13 @@ fuente de verdad del estado de fixes y bugs abiertos — no duplicarlo acá.
 - **Subensamblajes:** `subassemblyType` = clase .NET completa (`Subassembly.BasicLane`) y parámetros
   por `Key`; ambos están en los `.atc` de `C:\ProgramData\Autodesk\C3D 2026\esp\Tool Catalogs\Road
   Catalog`. Para encadenar, leer los puntos con `civil3d_assembly get` y pasar `attachPointIndex`.
-- **Al cerrar Civil 3D para recompilar casi siempre queda un `acad.exe` vivo sin ventana** (bloquea
-  la copia a `bin\`): chequear con `Get-Process acad`. Si **no tiene ventana** (`MainWindowTitle`
-  vacío), matarlo sin preguntar (permiso permanente de Santi, 10-13); si tiene ventana, es Civil 3D
-  abierto de verdad → preguntar.
-- **Ciclo completo de recompilación** (cada cambio en C# lo necesita; Civil 3D lo abre Santi):
-  (1) pedirle a Santi que guarde y cierre Civil 3D → (2) matar el `acad.exe` huérfano si quedó →
-  (3) `dotnet build ... -c Release` → (4) si cambió `src/`: `npm run build` → (5) Santi abre el
-  dibujo, `NETLOAD`, y si cambió `src/` también `/mcp` → Reconnect. Para no perder vueltas:
-  compilar antes a una carpeta temporal (`-o <scratch>`) con Civil 3D abierto para detectar errores
-  de C#, y juntar varios cambios por compilación.
+- **Permiso permanente de Santi (11-16): cerrar Civil 3D sin preguntar** (incluso con ventana)
+  cuando el plugin esté colgado o haya que recompilar. Antes, si el plugin responde, guardar el
+  dibujo con `civil3d_drawing save`; lo no guardado se pierde.
+- **Ciclo de recompilación:** guardar el dibujo → `scripts\civil3d.ps1 -Compilar [-Ts] -Abrir -Dibujo
+  <dwg>` → si cambió `src/`, pedirle a Santi `/mcp` → Reconnect (lo único manual). Para no perder
+  vueltas: compilar antes a una carpeta temporal (`-o <scratch>`) con Civil 3D abierto para detectar
+  errores de C#, y juntar varios cambios por compilación.
 - **Probar fixes sin tocar los dibujos de la prueba:** `civil3d_drawing new` con la plantilla
   métrica, o `civil3d_drawing save` con `saveAs` a una copia `…-pruebas.dwg` (el dibujo activo pasa
   a ser la copia; borrarla al terminar).

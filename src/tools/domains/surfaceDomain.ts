@@ -113,7 +113,12 @@ const FlowPathPointSchema = z.object({
 
 const SurfaceElevationAlongResponseSchema = z.object({
   surfaceName: z.string(),
-  samples: z.array(FlowPathPointSchema),
+  samples: z.array(z.object({
+    x: z.number(),
+    y: z.number(),
+    station: z.number().optional(),
+    elevation: z.number().nullable(),
+  })),
   units: z.string(),
 });
 
@@ -216,12 +221,17 @@ const canonicalSurfaceInputShape = {
     "create_from_dem",
     "comparison_workflow",
     "drainage_workflow",
+    "add_point_group",
+    "style_set",
+    "analysis_generate",
+    "label_add",
+    "create_from_las",
   ]),
   name: z.string().optional(),
   x: z.number().optional(),
   y: z.number().optional(),
   points: z.array(Point2DOr3DSchema).optional(),
-  analysisType: z.enum(["elevations", "slopes", "contours", "watersheds"]).optional(),
+  analysisType: z.enum(["elevations", "slopes", "directions", "contours", "watersheds"]).optional(),
   style: z.string().optional(),
   layer: z.string().optional(),
   description: z.string().optional(),
@@ -231,8 +241,16 @@ const canonicalSurfaceInputShape = {
   majorInterval: z.number().optional(),
   baseSurface: z.string().optional(),
   comparisonSurface: z.string().optional(),
-  method: z.enum(["tin_volume", "average_end_area", "prismoidal"]).optional(),
+  // Shared by volume actions (tin_volume…) and sample_elevations (grid…); each action's own schema narrows it.
+  method: z.enum(["tin_volume", "average_end_area", "prismoidal", "grid", "points", "transect"]).optional(),
   format: z.enum(["summary", "detailed"]).optional(),
+  pointGroup: z.string().optional(),
+  labelKind: z.enum(["spot_elevation", "slope", "slope_two_point", "contour"]).optional(),
+  labelStyle: z.string().optional(),
+  interval: z.number().positive().optional(),
+  classifications: z.array(z.number().int().min(0).max(255)).optional(),
+  thinning: z.enum(["mean", "min"]).optional(),
+  maxPoints: z.number().int().positive().optional(),
   boundary: z.array(Point2DSchema).optional(),
   ranges: z.array(z.object({ min: z.number(), max: z.number() })).optional(),
   numRanges: z.number().int().optional(),
@@ -273,6 +291,54 @@ const SurfaceGetElevationAlongArgsSchema = z.object({
   action: z.literal("get_elevation_along"),
   name: z.string(),
   points: z.array(Point2DSchema).min(1),
+  stepDistance: z.number().positive().optional(),
+});
+
+const SurfaceAddPointGroupArgsSchema = z.object({
+  action: z.literal("add_point_group"),
+  name: z.string(),
+  pointGroup: z.string(),
+});
+
+const SurfaceStyleSetArgsSchema = z.object({
+  action: z.literal("style_set"),
+  name: z.string(),
+  style: z.string(),
+});
+
+const SurfaceAnalysisGenerateArgsSchema = z.object({
+  action: z.literal("analysis_generate"),
+  name: z.string(),
+  analysisType: z.enum(["elevations", "slopes", "directions"]),
+  numRanges: z.number().int().min(1).max(64).optional(),
+  // elevations: drawing units; slopes: percent; directions: degrees.
+  ranges: z.array(z.object({ min: z.number(), max: z.number() })).optional(),
+});
+
+const SurfaceLabelAddArgsSchema = z.object({
+  action: z.literal("label_add"),
+  name: z.string(),
+  labelKind: z.enum(["spot_elevation", "slope", "slope_two_point", "contour"]),
+  points: z.array(Point2DSchema).optional(),
+  startPoint: Point2DSchema.optional(),
+  endPoint: Point2DSchema.optional(),
+  interval: z.number().positive().optional(),
+  labelStyle: z.string().optional(),
+});
+
+const SurfaceCreateFromLasArgsSchema = z.object({
+  action: z.literal("create_from_las"),
+  filePath: z.string(),
+  name: z.string(),
+  style: z.string().optional(),
+  layer: z.string().optional(),
+  description: z.string().optional(),
+  gridSpacing: z.number().positive().optional(),
+  // ASPRS classes; default [2] = ground. Empty array = every class.
+  classifications: z.array(z.number().int().min(0).max(255)).optional(),
+  thinning: z.enum(["mean", "min"]).optional(),
+  maxPoints: z.number().int().positive().optional(),
+  boundary: z.array(Point2DSchema).optional(),
 });
 
 const SurfaceGetStatisticsArgsSchema = z.object({
@@ -488,6 +554,7 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("getSurfaceElevationsAlong", {
           name: args.name,
           points: args.points,
+          stepDistance: args.stepDistance,
         }),
       ),
     },
@@ -716,9 +783,10 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
       action: "watershed_add",
       inputSchema: SurfaceWatershedAddArgsSchema,
       responseSchema: GenericSurfaceResponseSchema,
-      capabilities: ["edit", "analyze"],
+      // The plugin only reports NOT_SUPPORTED (the .NET API cannot compute watersheds): nothing to approve.
+      capabilities: ["analyze"],
       requiresActiveDrawing: true,
-      safeForRetry: false,
+      safeForRetry: true,
       pluginMethods: ["addSurfaceWatershed"],
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("addSurfaceWatershed", {
@@ -896,7 +964,9 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
           }),
         );
 
-        const elevations = sampledElevations.samples.map((sample) => sample.elevation);
+        const elevations = sampledElevations.samples
+          .map((sample) => sample.elevation)
+          .filter((elevation): elevation is number => elevation !== null);
         const startElevation = elevations[0] ?? 0;
         const endElevation = elevations[elevations.length - 1] ?? 0;
 
@@ -917,6 +987,96 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
           runoffEstimate,
         };
       }),
+    },
+    add_point_group: {
+      action: "add_point_group",
+      inputSchema: SurfaceAddPointGroupArgsSchema,
+      responseSchema: GenericSurfaceResponseSchema,
+      capabilities: ["edit"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["addSurfacePointGroup"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("addSurfacePointGroup", {
+          name: args.name,
+          pointGroup: args.pointGroup,
+        }),
+      ),
+    },
+    style_set: {
+      action: "style_set",
+      inputSchema: SurfaceStyleSetArgsSchema,
+      responseSchema: GenericSurfaceResponseSchema,
+      capabilities: ["edit"],
+      requiresActiveDrawing: true,
+      safeForRetry: true,
+      pluginMethods: ["setSurfaceStyle"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("setSurfaceStyle", {
+          name: args.name,
+          style: args.style,
+        }),
+      ),
+    },
+    analysis_generate: {
+      action: "analysis_generate",
+      inputSchema: SurfaceAnalysisGenerateArgsSchema,
+      responseSchema: GenericSurfaceResponseSchema,
+      capabilities: ["edit", "analyze"],
+      requiresActiveDrawing: true,
+      safeForRetry: true,
+      pluginMethods: ["generateSurfaceAnalysis"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("generateSurfaceAnalysis", {
+          name: args.name,
+          analysisType: args.analysisType,
+          numRanges: args.numRanges,
+          ranges: args.ranges,
+        }),
+      ),
+    },
+    label_add: {
+      action: "label_add",
+      inputSchema: SurfaceLabelAddArgsSchema,
+      responseSchema: GenericSurfaceResponseSchema,
+      capabilities: ["create"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["addSurfaceLabels"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("addSurfaceLabels", {
+          name: args.name,
+          labelKind: args.labelKind,
+          points: args.points,
+          startPoint: args.startPoint,
+          endPoint: args.endPoint,
+          interval: args.interval,
+          labelStyle: args.labelStyle,
+        }),
+      ),
+    },
+    create_from_las: {
+      action: "create_from_las",
+      inputSchema: SurfaceCreateFromLasArgsSchema,
+      responseSchema: GenericSurfaceResponseSchema,
+      capabilities: ["create", "import"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["createSurfaceFromLas"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("createSurfaceFromLas", {
+          filePath: args.filePath,
+          name: args.name,
+          style: args.style,
+          layer: args.layer,
+          description: args.description,
+          gridSpacing: args.gridSpacing,
+          classifications: args.classifications,
+          thinning: args.thinning,
+          maxPoints: args.maxPoints,
+          boundary: args.boundary,
+        }),
+      ),
     },
   },
   exposures: [
@@ -951,6 +1111,11 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
         "create_from_dem",
         "comparison_workflow",
         "drainage_workflow",
+        "add_point_group",
+        "style_set",
+        "analysis_generate",
+        "label_add",
+        "create_from_las",
       ],
       resolveAction: (rawArgs) => ({
         action: String(rawArgs.action ?? ""),
